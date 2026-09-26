@@ -1,21 +1,11 @@
-//
-//  ContentView.swift
-//  MeshChat
-//
-//  Created by Вячеслав Удалый on 9/26/26.
-//
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 MeshChat contributors
 
 import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        Text("MeshChat")
     }
 }
 
