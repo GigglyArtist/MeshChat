@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_meshchat._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>MeshChat использует локальную сеть, чтобы находить собеседников рядом и обмениваться сообщениями без интернета.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Камера нужна, чтобы сканировать QR-код приглашения в комнату.</string>
+</dict>
+</plist>
