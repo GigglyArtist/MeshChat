@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="1" systemVersion="1" minimumToolsVersion="Automatic" sourceLanguage="Swift" userDefinedModelVersionIdentifier="">
+    <entity name="ChatSession" representedClassName="ChatSessionEntity" syncable="YES">
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="endedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="roleRaw" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="Message" inverseName="session" inverseEntity="Message"/>
+        <relationship name="participants" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Peer" inverseName="sessions" inverseEntity="Peer"/>
+        <fetchIndex name="byCreatedAt">
+            <fetchIndexElement property="createdAt" type="Binary" order="descending"/>
+        </fetchIndex>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="Message" representedClassName="MessageEntity" syncable="YES">
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="senderID" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="text" attributeType="String"/>
+        <attribute name="timestamp" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="session" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="ChatSession" inverseName="messages" inverseEntity="ChatSession"/>
+        <fetchIndex name="byTimestamp">
+            <fetchIndexElement property="timestamp" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="bySenderID">
+            <fetchIndexElement property="senderID" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="Peer" representedClassName="PeerEntity" syncable="YES">
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="lastSeenAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="nickname" attributeType="String"/>
+        <relationship name="sessions" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="ChatSession" inverseName="participants" inverseEntity="ChatSession"/>
+        <fetchIndex name="byID">
+            <fetchIndexElement property="id" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+</model>
