@@ -17,7 +17,10 @@ nonisolated class PeerEntity: NSManagedObject {
 }
 
 extension PeerEntity {
+    /// Имя сущности в модели Core Data.
+    nonisolated static let entityName = "Peer"
+
     @nonobjc class func fetchRequest() -> NSFetchRequest<PeerEntity> {
-        NSFetchRequest<PeerEntity>(entityName: "Peer")
+        NSFetchRequest<PeerEntity>(entityName: entityName)
     }
 }

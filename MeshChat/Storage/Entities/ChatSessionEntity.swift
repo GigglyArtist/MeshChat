@@ -26,7 +26,10 @@ nonisolated class ChatSessionEntity: NSManagedObject {
 }
 
 extension ChatSessionEntity {
+    /// Имя сущности в модели Core Data.
+    nonisolated static let entityName = "ChatSession"
+
     @nonobjc class func fetchRequest() -> NSFetchRequest<ChatSessionEntity> {
-        NSFetchRequest<ChatSessionEntity>(entityName: "ChatSession")
+        NSFetchRequest<ChatSessionEntity>(entityName: entityName)
     }
 }

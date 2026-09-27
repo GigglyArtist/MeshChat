@@ -14,12 +14,16 @@ nonisolated class MessageEntity: NSManagedObject {
     @NSManaged var timestamp: Date
     /// PermanentPeerID отправителя.
     @NSManaged var senderID: UUID
-    /// Сессия, к которой относится сообщение. Обязательна: сообщение без сессии не существует.
-    @NSManaged var session: ChatSessionEntity
+    /// Сессия, к которой относится сообщение. Optional в модели (ограничение Core Data §10.2);
+    /// инвариант «без сессии нет сообщения» гарантирует StorageManager.
+    @NSManaged var session: ChatSessionEntity?
 }
 
 extension MessageEntity {
+    /// Имя сущности в модели Core Data.
+    nonisolated static let entityName = "Message"
+
     @nonobjc class func fetchRequest() -> NSFetchRequest<MessageEntity> {
-        NSFetchRequest<MessageEntity>(entityName: "Message")
+        NSFetchRequest<MessageEntity>(entityName: entityName)
     }
 }
