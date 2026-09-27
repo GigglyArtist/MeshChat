@@ -19,7 +19,7 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
 | `Storage/` | Foundation, CoreData | SwiftUI, Network |
 | `Network/` | Foundation, Network, CryptoKit, Security, os | SwiftUI, CoreData |
 | `Application/` | Foundation, os | SwiftUI, CoreData, Network |
-| `Presentation/` | SwiftUI, UIKit, Observation, VisionKit, AVFoundation (только разрешение камеры), CoreImage | CoreData, Network |
+| `Presentation/` | SwiftUI, UIKit, Observation, os, VisionKit, Vision (только `VNBarcodeSymbology`), AVFoundation (только разрешение камеры), CoreImage | CoreData, Network |
 | `App/` | всё | — |
 
 Слои общаются только через протоколы из `Domain/Protocols`. Конкретные типы создаются только в `App/` (`AppStartup`, `AppEnvironment`). Во View зависимости передаются через `init`, без `.environment(...)`.
@@ -31,7 +31,7 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
 - В проекте `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`: всё вне `Presentation/` и `App/` помечай `nonisolated` (или делай `actor`). Настройку проекта не меняй.
 - `@unchecked Sendable` и `nonisolated(unsafe)` — только с комментарием, почему это безопасно.
 - Известные приёмы (ARCHITECTURE.md §17.1):
-  - `static let` не-`Sendable` типа → `nonisolated(unsafe) static let` + комментарий;
+  - `static let` не-`Sendable` типа → `nonisolated(unsafe) static let` + комментарий; для `Sendable`-типов (`Data`, `String`, `UUID`) `nonisolated(unsafe)` **не** ставить — это предупреждение компилятора;
   - Obj-C-глобалы merge policy → `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)`;
   - запросы Core Data → `NSFetchRequest<T>(entityName: T.entityName)`, без строковых литералов имён сущностей.
 
@@ -44,7 +44,8 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
   ```
 - Один основной тип на файл, имя файла = имя типа.
 - Идентификаторы и коммиты — на английском, `///`-комментарии — на русском. Все протоколы документированы.
-- Запрещено: force unwrap и `try!` вне тестов, `print` (только `os.Logger`), синглтоны `static let shared`, сторонние зависимости, `NSManagedObject` вне `Storage/`.
+- Запрещено: force unwrap и `try!` вне тестов, `print` (только `os.Logger`), синглтоны `static let shared`, сторонние зависимости, `NSManagedObject` вне `Storage/`, тестовые хуки в production-коде (`…ForTesting`) — тесты работают только через публичный API и внедряемые зависимости.
+- UI не отказывает молча: не удалось построить картинку/QR — `Logger.error` и видимый текст ошибки на экране.
 - Никогда не логируй `roomKey`, `tlsPSK`, `authToken`, пароль. ID, ники и тексты — только с `privacy: .private`.
 
 ## Xcode-проект
@@ -55,11 +56,15 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
 
 ## Сборка и тесты
 
-Таргеты: `MeshChat`, `MeshChatTests`, `MeshChatUITests`. Схема: `MeshChat`. Симулятор по умолчанию: `iPhone 16 Plus` (если его нет — любой доступный из `xcrun simctl list devices available`).
+Таргеты: `MeshChat`, `MeshChatTests`, `MeshChatUITests`. Схема: `MeshChat`.
+
+- Сборка и тесты — через инструменты Xcode (`BuildProject`, `RunAllTests` и т. п.), если они тебе доступны; иначе через `xcodebuild`. В отчёте укажи, чем пользовался.
+- Для `xcodebuild` бери любой iPhone из `xcrun simctl list devices available` или `-destination 'generic/platform=iOS Simulator'` для сборки без запуска.
+- Проверки настроек (`xcodebuild -showBuildSettings`) симулятор не требуют — их выполняй всегда, когда промпт просит.
 
 ```bash
-xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=iPhone 16 Plus' -derivedDataPath DerivedData build
-xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=iPhone 16 Plus' -derivedDataPath DerivedData test
+xcodebuild -scheme MeshChat -destination 'generic/platform=iOS Simulator' -derivedDataPath DerivedData build
+xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=<iPhone из simctl>' -derivedDataPath DerivedData test
 ```
 
 Тесты — Swift Testing (`import Testing`). Сборка и все тесты должны быть зелёными перед каждым коммитом.
@@ -72,6 +77,8 @@ xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=iPhone 16 
 - Коммить сам после каждой завершённой фичи, только при зелёной сборке и тестах.
 - Перед коммитом: `git status` и `git diff --staged --stat`. Список файлов в индексе должен совпадать с файлами именно этого коммита. Инструмент записи файлов может добавлять их в индекс сам — лишние убирай через `git restore --staged <file>`. Никогда не коммить `xcuserdata/`, `DerivedData/`, `.DS_Store`.
 - Не делай `git push`, `--force`, `rebase`, `--amend` уже опубликованных коммитов.
+- Нашёл ошибку в уже закоммиченном коде — отдельный коммит `fix(<scope>): …`, не внутри `test(...)` или другого коммита.
+- Исправление бага коммитится **вместе** с регрессионным тестом, который без исправления падает.
 
 ## Порядок шагов
 

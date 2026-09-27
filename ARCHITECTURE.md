@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.2 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.3 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -214,7 +214,7 @@ flowchart TD
 | **Storage** | `Foundation`, `CoreData`, Domain | `SwiftUI`, `Network` |
 | **Network** | `Foundation`, `Network`, `CryptoKit`, `Security` (фреймворк), `os`, Domain | `SwiftUI`, `CoreData` |
 | **Application** | `Foundation`, `os`, Domain | `SwiftUI`, `CoreData`, `Network` |
-| **Presentation** | `SwiftUI`, `UIKit`, `Observation`, `VisionKit`, `AVFoundation` (только разрешение камеры), `CoreImage`, Domain, Application | `CoreData`, `Network` |
+| **Presentation** | `SwiftUI`, `UIKit`, `Observation`, `os` (`Logger`), `VisionKit`, `Vision` (только тип `VNBarcodeSymbology` для сканера), `AVFoundation` (только разрешение камеры), `CoreImage`, Domain, Application | `CoreData`, `Network` |
 | **App** | всё | — |
 
 > Соблюдение правила можно проверить командой `grep -rn "import CoreData" <App>/ | grep -v "/Storage/"` — вывод должен быть пустым (аналогично для `import Network` вне `/Network/`).
@@ -1284,6 +1284,9 @@ protocol HistoryServicing: Sendable {
 - События комнаты ViewModel читает в `.task { await viewModel.observe() }` — задача автоматически отменяется при уходе с экрана.
 - View не содержит логики: только отображение состояния и вызов методов ViewModel.
 - Каждый экран имеет `#Preview` на фейках из `AppEnvironment.preview`.
+- **UI не отказывает молча.** Если картинку, QR или другой ресурс не удалось построить — ошибка пишется в `Logger`, а на экране появляется понятный текст («Не удалось построить QR-код»), а не пустое место.
+- **Никаких тестовых хуков в production-коде** (`forceSet…ForTesting` и подобное). Тест задаёт состояние только через публичный API и внедряемые зависимости; если так не получается — это сигнал, что ViewModel нужно дать зависимость, а не лазейку.
+- Ключевые экраны проверяются **тестом отрисовки**: `ImageRenderer` рендерит View фиксированного размера в светлой и тёмной теме, и тест проверяет результат (для QR — `CIDetector` должен прочитать тот же payload).
 - Все строки — через String Catalog (`Localizable.xcstrings`), основной язык — русский.
 
 ### 12.3. Состояние сессии → UI
@@ -1475,6 +1478,7 @@ enum NetworkError: Error, Sendable, Equatable {
   | Ситуация | Решение |
   |---|---|
   | `static let` не-`Sendable` типа (например, `NSManagedObjectModel`) | `nonisolated(unsafe) static let` + комментарий, почему безопасно |
+  | `static let` `Sendable`-типа (`Data`, `String`, `UUID`, `Int`) | Обычный `static let` (в `nonisolated`-типе) или `nonisolated static let`. `nonisolated(unsafe)` здесь лишний, и компилятор выдаёт предупреждение |
   | Obj-C-глобалы вроде `NSMergeByPropertyObjectTrumpMergePolicy` | Swift-API: `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)` |
   | `fetchRequest()` в расширениях сущностей | Не используется; запросы строятся в `CoreDataStorageManager` через `NSFetchRequest<T>(entityName: T.entityName)` |
 
@@ -1531,7 +1535,8 @@ Scopes: `config`, `storage`, `security`, `network`, `protocol`, `session`, `app`
 2. Коммит делается **только** после зелёной сборки и зелёных тестов.
 3. Перед коммитом — `git status` и `git diff --staged`: в коммите только файлы задачи, без `xcuserdata`, `DerivedData`, `.DS_Store`.
 4. Никаких `git push --force`, `rebase` опубликованной истории и `commit --amend` уже запушенных коммитов. Пушит автор проекта.
-5. После завершения этапа дорожной карты — тег `v0.<номер этапа>`.
+5. После завершения этапа дорожной карты — тег `v0.<номер этапа>`; исправления после этапа — `v0.<этап>.<N>`.
+6. Ошибка, найденная в уже закоммиченном коде, исправляется **отдельным** коммитом `fix(<scope>): …`, даже если нашлась при написании тестов. Смешивать исправление с `test(...)` нельзя: по истории должно быть видно, что и когда чинили.
 
 Примеры:
 
@@ -1586,3 +1591,12 @@ docs(architecture): describe TLS-PSK channel security
 | §3 | Presentation может импортировать `AVFoundation` для запроса доступа к камере | Сканер QR |
 | §12.1 | `HomeView` без ViewModel; временная схема создания/входа до этапа 6 | Не писать пустой ViewModel и не ждать сеть, чтобы проверить QR на устройствах |
 | §13 | `AppEnvironment.secrets` | Экраны создания и входа |
+
+### v1.3 — после задачи 03
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| §3 | Presentation может импортировать `os` и `Vision` (только `VNBarcodeSymbology`) | `Logger` в UI; `DataScannerViewController` принимает символики из Vision |
+| §12.2 | UI не отказывает молча; запрет тестовых хуков в production-коде; тесты отрисовки через `ImageRenderer` | Ручная проверка: у хоста не появился QR, хотя юнит-тесты генератора зелёные — тесты проверяли генератор, но не экран |
+| §17.4 | Ошибка, найденная в уже закоммиченном коде, исправляется отдельным `fix(...)`, а не внутри `test(...)` | В задаче 03 исправление алгоритма оказалось в тестовом коммите |
+| §17.1 | `nonisolated(unsafe)` только для не-`Sendable` типов | Сборка задачи 03 дала предупреждение на `nonisolated(unsafe)` у константы `Data` |
