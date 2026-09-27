@@ -8,6 +8,7 @@ import Foundation
 struct AppEnvironment: Sendable {
     let identity: any IdentityProviding
     let storage: any StorageManaging
+    let secrets: any RoomSecretProviding
 
     // MARK: - Previews
 
@@ -22,7 +23,7 @@ struct AppEnvironment: Sendable {
             fatalError("Preview: не удалось создать in-memory Core Data хранилище: \(error)")
         }
         let storage = CoreDataStorageManager(controller: controller)
-        return AppEnvironment(identity: identity, storage: storage)
+        return AppEnvironment(identity: identity, storage: storage, secrets: RoomCredentialsFactory())
     }
     #endif
 }
