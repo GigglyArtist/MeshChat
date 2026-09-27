@@ -12,8 +12,13 @@ private let goldenServiceName = "6B1F2C8E-3D4A-4F5B-9C7D-8E9F0A1B2C3D"
 @MainActor
 struct JoinRoomViewModelTests {
 
-    private func makeViewModel() -> JoinRoomViewModel {
-        JoinRoomViewModel(secrets: RoomCredentialsFactory())
+    private func makeViewModel(cameraGranted: Bool = true) -> JoinRoomViewModel {
+        let permission: CameraPermission = cameraGranted ? .granted : .denied
+        return JoinRoomViewModel(
+            secrets: RoomCredentialsFactory(),
+            checkCamera: { permission },
+            requestCamera: { permission }
+        )
     }
 
     private func validPayload() -> String {
@@ -30,9 +35,9 @@ struct JoinRoomViewModelTests {
     }
 
     @Test("handleScan с валидным QR → .found")
-    func handleScanValidPayloadTransitionsToFound() {
-        let vm = makeViewModel()
-        vm.forceSetStateForTesting(.scanning)
+    func handleScanValidPayloadTransitionsToFound() async {
+        let vm = makeViewModel(cameraGranted: true)
+        await vm.prepare()
         vm.handleScan(validPayload())
         if case .found = vm.state { } else {
             Issue.record("Expected .found, got \(vm.state)")
@@ -40,9 +45,9 @@ struct JoinRoomViewModelTests {
     }
 
     @Test("handleScan с мусором — состояние не меняется")
-    func handleScanGarbageStaysScanning() {
-        let vm = makeViewModel()
-        vm.forceSetStateForTesting(.scanning)
+    func handleScanGarbageStaysScanning() async {
+        let vm = makeViewModel(cameraGranted: true)
+        await vm.prepare()
         vm.handleScan("not-a-qr-code")
         if case .scanning = vm.state { } else {
             Issue.record("Expected .scanning, got \(vm.state)")
@@ -50,9 +55,9 @@ struct JoinRoomViewModelTests {
     }
 
     @Test("handleScan с неподдерживаемой версией → .failed")
-    func handleScanUnsupportedVersionFails() throws {
-        let vm = makeViewModel()
-        vm.forceSetStateForTesting(.scanning)
+    func handleScanUnsupportedVersionFails() async throws {
+        let vm = makeViewModel(cameraGranted: true)
+        await vm.prepare()
         let invite = RoomInvite(version: 99, serviceName: goldenServiceName, roomKey: goldenRoomKey)
         let payload = try invite.qrPayload()
         vm.handleScan(payload)
@@ -71,4 +76,3 @@ struct JoinRoomViewModelTests {
         }
     }
 }
-

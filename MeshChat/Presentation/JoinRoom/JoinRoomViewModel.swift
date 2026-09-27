@@ -21,19 +21,27 @@ import Foundation
     #endif
 
     private let secrets: any RoomSecretProviding
+    private let checkCamera: () -> CameraPermission
+    private let requestCamera: () async -> CameraPermission
 
-    init(secrets: any RoomSecretProviding) {
+    init(
+        secrets: any RoomSecretProviding,
+        checkCamera: @escaping () -> CameraPermission = { CameraPermission.current() },
+        requestCamera: @escaping () async -> CameraPermission = { await CameraPermission.request() }
+    ) {
         self.secrets = secrets
+        self.checkCamera = checkCamera
+        self.requestCamera = requestCamera
     }
 
     func prepare() async {
-        switch CameraPermission.current() {
+        switch checkCamera() {
         case .granted:
             state = .scanning
         case .denied:
             state = .cameraDenied
         case .notDetermined:
-            let result = await CameraPermission.request()
+            let result = await requestCamera()
             state = result == .granted ? .scanning : .cameraDenied
         }
     }
@@ -55,11 +63,6 @@ import Foundation
     #if DEBUG
     func handleDebugPaste() {
         handleScan(debugPayloadInput)
-    }
-
-    /// Только для юнит-тестов: устанавливает состояние напрямую, минуя логику камеры.
-    func forceSetStateForTesting(_ newState: State) {
-        state = newState
     }
     #endif
 }
