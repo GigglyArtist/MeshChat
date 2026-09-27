@@ -22,14 +22,18 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
 | `Presentation/` | SwiftUI, UIKit, Observation, VisionKit, CoreImage | CoreData, Network |
 | `App/` | всё | — |
 
-Слои общаются только через протоколы из `Domain/Protocols`. Конкретные типы создаются только в `App/AppEnvironment.swift`.
+Слои общаются только через протоколы из `Domain/Protocols`. Конкретные типы создаются только в `App/` (`AppStartup`, `AppEnvironment`). Во View зависимости передаются через `init`, без `.environment(...)`.
 
 ## Swift и конкурентность
 
 - Swift 6 language mode, iOS 17.0+, ноль предупреждений.
 - Изменяемое общее состояние — `actor`. ViewModel — `@Observable @MainActor final class`.
-- Если в build settings `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`: всё вне `Presentation/` и `App/` помечай `nonisolated` (или делай `actor`). Настройку проекта не меняй.
-- `@unchecked Sendable` — только с комментарием, почему это безопасно.
+- В проекте `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`: всё вне `Presentation/` и `App/` помечай `nonisolated` (или делай `actor`). Настройку проекта не меняй.
+- `@unchecked Sendable` и `nonisolated(unsafe)` — только с комментарием, почему это безопасно.
+- Известные приёмы (ARCHITECTURE.md §17.1):
+  - `static let` не-`Sendable` типа → `nonisolated(unsafe) static let` + комментарий;
+  - Obj-C-глобалы merge policy → `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)`;
+  - запросы Core Data → `NSFetchRequest<T>(entityName: T.entityName)`, без строковых литералов имён сущностей.
 
 ## Стиль
 
@@ -46,15 +50,16 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
 ## Xcode-проект
 
 - Проект использует синхронизируемые папки: новые файлы внутри папки таргета попадают в проект сами. Не создавай группы вручную.
-- `project.pbxproj` правь только если задача этого прямо требует, точечно, и проверяй результат через `xcodebuild -showBuildSettings`.
+- `project.pbxproj` напрямую **не редактируй** (Xcode держит его открытым, хук блокирует запись). Если задаче нужна новая build setting или capability — остановись и напиши мне: таргет, конфигурация, настройка, значение. После моего подтверждения проверь результат через `xcodebuild -showBuildSettings`.
 - `Config/Info.plist` лежит вне папки таргета — не переноси его.
 
 ## Сборка и тесты
 
+Таргеты: `MeshChat`, `MeshChatTests`, `MeshChatUITests`. Схема: `MeshChat`. Симулятор по умолчанию: `iPhone 16 Plus` (если его нет — любой доступный из `xcrun simctl list devices available`).
+
 ```bash
-xcrun simctl list devices available            # выбери доступный iPhone-симулятор
-xcodebuild -scheme <App> -destination 'platform=iOS Simulator,name=<iPhone>' -derivedDataPath DerivedData build
-xcodebuild -scheme <App> -destination 'platform=iOS Simulator,name=<iPhone>' -derivedDataPath DerivedData test
+xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=iPhone 16 Plus' -derivedDataPath DerivedData build
+xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=iPhone 16 Plus' -derivedDataPath DerivedData test
 ```
 
 Тесты — Swift Testing (`import Testing`). Сборка и все тесты должны быть зелёными перед каждым коммитом.
@@ -65,7 +70,7 @@ xcodebuild -scheme <App> -destination 'platform=iOS Simulator,name=<iPhone>' -de
 - Типы: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`, `build`, `style`.
 - Scopes: `config`, `storage`, `security`, `network`, `protocol`, `session`, `app`, `ui`, `chat`, `history`, `qr`, `architecture`.
 - Коммить сам после каждой завершённой фичи, только при зелёной сборке и тестах.
-- Перед коммитом: `git status` и `git diff --staged`. Добавляй файлы явно, без `xcuserdata/`, `DerivedData/`, `.DS_Store`.
+- Перед коммитом: `git status` и `git diff --staged --stat`. Список файлов в индексе должен совпадать с файлами именно этого коммита. Инструмент записи файлов может добавлять их в индекс сам — лишние убирай через `git restore --staged <file>`. Никогда не коммить `xcuserdata/`, `DerivedData/`, `.DS_Store`.
 - Не делай `git push`, `--force`, `rebase`, `--amend` уже опубликованных коммитов.
 
 ## Отчёт после задачи

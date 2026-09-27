@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.0 (утверждено) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.1 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -25,6 +25,7 @@
 16. [Стратегия тестирования](#16-стратегия-тестирования)
 17. [Конвенции кода и Git](#17-конвенции-кода-и-git)
 18. [Дорожная карта](#18-дорожная-карта)
+19. [Журнал изменений](#19-журнал-изменений)
 
 ---
 
@@ -248,7 +249,9 @@ MeshChat/                              ← корень репозитория
 ├── MeshChat/                          ← таргет приложения (синхронизируемая папка)
 │   ├── App/
 │   │   ├── MeshChatApp.swift
-│   │   └── AppEnvironment.swift       ← Composition Root
+│   │   ├── AppStartup.swift           ← сборка зависимостей при запуске
+│   │   ├── AppEnvironment.swift       ← Composition Root
+│   │   └── Preview/                   ← фейки для #Preview (#if DEBUG)
 │   ├── Domain/
 │   │   ├── Models/                    ← PeerProfile, ChatMessage, ChatSessionInfo, SessionRole, RoomInvite…
 │   │   ├── Events/                    ← SessionState, SessionEvent, RoomEvent…
@@ -392,6 +395,7 @@ enum SessionEvent: Sendable, Equatable {
 /// Постоянная личность устройства.
 protocol IdentityProviding: Sendable {
     /// Возвращает PermanentPeerID. При первом вызове генерирует UUID и сохраняет в Keychain.
+    /// Безопасен при одновременных вызовах: всегда возвращает то значение, которое реально лежит в Keychain.
     func permanentPeerID() throws -> UUID
     /// Никнейм или nil, если онбординг ещё не пройден.
     func nickname() -> String?
@@ -399,13 +403,38 @@ protocol IdentityProviding: Sendable {
     func setNickname(_ nickname: String) throws
 }
 
+// Domain/Models/NicknamePolicy.swift — единое правило ника для всего приложения
+enum NicknamePolicy {
+    static let maxLength = 32
+    /// Обрезает пробелы и переводы строк по краям. nil, если результат пуст или длиннее maxLength символов.
+    static func normalize(_ raw: String) -> String?
+}
+
+// Security/KeychainStoring.swift — внутренний протокол слоя Security (нужен для фейка в тестах)
 /// Тонкая обёртка над Security.framework (kSecClassGenericPassword).
 protocol KeychainStoring: Sendable {
+    /// Данные элемента или nil, если элемента нет.
     func read(account: String) throws -> Data?
-    func write(_ data: Data, account: String) throws
+    /// Добавляет элемент. Существующий НЕ перезаписывает: бросает `KeychainError.duplicateItem`.
+    func add(_ data: Data, account: String) throws
     func delete(account: String) throws
 }
 ```
+
+`NicknamePolicy` используют `IdentityProvider` (сохранение), `OnboardingViewModel` (кнопка «Продолжить») и `HostSession` (проверка ника в `clientHello`, §8.4) — правило записано один раз.
+
+Почему `add`, а не «записать или обновить»: `PermanentPeerID` не должен меняться никогда. Если два вызова одновременно не нашли ID и сгенерировали разные UUID, выиграет первый `add`, а второй получит `duplicateItem`, перечитает Keychain и вернёт уже сохранённое значение:
+
+```text
+permanentPeerID():
+  data = keychain.read("permanentPeerID")
+  если data есть → вернуть UUID(data)        (16 байт; иначе IdentityError.corruptedIdentity)
+  new = UUID()
+  keychain.add(new)                          → успех: вернуть new
+                                             → duplicateItem: вернуть UUID(keychain.read(...))
+```
+
+Испорченные данные в Keychain **не** перезаписываются молча: новый ID разорвал бы связь с историей на устройствах друзей. Приложение показывает ошибку запуска.
 
 ### 6.2. Keychain
 
@@ -1032,9 +1061,15 @@ erDiagram
 | `text` | String | нет | — | — |
 | `timestamp` | Date | нет | индекс | Время отправителя |
 | `senderID` | UUID | нет | индекс | PermanentPeerID автора (в том числе свой) |
-| `session` | → ChatSession, to-one | **нет** | Nullify, inverse `messages` | Сообщение не существует без сессии |
+| `session` | → ChatSession, to-one | да (в модели) | Nullify, inverse `messages` | Сообщение не существует без сессии — инвариант обеспечивает `StorageManager` (см. ниже) |
 
 ✚ — поля, добавленные к ТЗ. Каждое нужно конкретному экрану или сценарию.
+
+**Ограничение Core Data (обнаружено на задаче 01).** Сущность с uniqueness constraint не может быть целью обязательной (non-optional) to-one обратной связи: загрузка модели падает с ошибкой *«Entity ChatSession cannot have uniqueness constraints and to-one mandatory inverse relationship Message.session»*. Причина в том, что ограничения уникальности в Core Data работают как механизм слияния конфликтов, во время которого объект может быть «обнулён», и обязательность связи нельзя проверить. Поэтому:
+
+- в модели `Message.session` — **optional**;
+- в Swift-классе — `@NSManaged var session: ChatSessionEntity?`, тип совпадает с моделью (не-опциональный тип над опциональным атрибутом может упасть при обращении к «пустому» объекту);
+- инвариант «у сообщения всегда есть сессия» держит `saveMessage`: без сессии он бросает `sessionNotFound` и ничего не создаёт; удаление сессии каскадно удаляет её сообщения.
 
 Почему связь Peer ↔ ChatSession — «многие ко многим»: в одной сессии до 5 участников, и один человек участвует во многих сессиях. Именно эта связь реализует «новый чат привязывается к старой истории». Сам локальный пользователь в `Peer` **не** хранится: его сообщения узнаются по `senderID == свой PermanentPeerID`.
 
@@ -1116,10 +1151,11 @@ upsertPeer(profile, seenAt):
 ### 10.5. Потоки и конфигурация
 
 - `PersistenceController` создаёт `NSPersistentContainer(name: "MeshChat", managedObjectModel: PersistenceController.model)`.
-- **Модель загружается один раз на процесс** (`static let model`). Несколько экземпляров `NSManagedObjectModel` с одними и теми же классами ломают юнит-тесты («Multiple NSEntityDescriptions claim…»).
+- **Модель загружается один раз на процесс** (`static let model`). Несколько экземпляров `NSManagedObjectModel` с одними и теми же классами ломают юнит-тесты («Multiple NSEntityDescriptions claim…»). `NSManagedObjectModel` не `Sendable`, поэтому свойство объявлено `nonisolated(unsafe) static let` с комментарием: инициализация `static let` потокобезопасна, а модель после загрузки не изменяется.
+- Имена сущностей — константы `static let entityName` в классах сущностей; строковые литералы `"Peer"`, `"Message"` в запросах запрещены.
 - `init(inMemory: true)` — SQLite по адресу `/dev/null` (поддерживает uniqueness constraints, в отличие от `NSInMemoryStoreType`). Используется в тестах и Previews.
 - `CoreDataStorageManager` держит **один** фоновый контекст (`newBackgroundContext()`), все операции — `try await context.perform { … }`. Один контекст = записи строго последовательны.
-- `mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy` на фоновом и `viewContext`; `viewContext.automaticallyMergesChangesFromParent = true`.
+- `mergePolicy = NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)` на фоновом и `viewContext` (Obj-C-глобал `NSMergeByPropertyObjectTrumpMergePolicy` в Swift 6 недоступен из неизолированного кода); `viewContext.automaticallyMergesChangesFromParent = true`.
 - `NSManagedObject` не пересекает границу `perform` и не покидает слой: внутри — сущности, наружу — доменные структуры (маппинг в `Storage/Mapping`).
 - `CoreDataStorageManager` помечен `@unchecked Sendable`: его хранимые свойства неизменяемы, а контекст используется только через `perform`. Причина записана в комментарии рядом.
 - Шифрование на диске: iOS Data Protection (класс по умолчанию — «до первой разблокировки»). Для v1 достаточно.
@@ -1195,7 +1231,9 @@ protocol HistoryServicing: Sendable {
 
 | Экран | ViewModel | Назначение |
 |---|---|---|
-| `OnboardingView` | `OnboardingViewModel` | Первый запуск: ввод никнейма (генерация `PermanentPeerID` — в фоне) |
+| `StartupErrorView` | — | Хранилище или Keychain не инициализировались |
+| `RootView` | `RootViewModel` | Выбор ветки: онбординг или главный экран |
+| `OnboardingView` | `OnboardingViewModel` | Первый запуск: ввод никнейма (`PermanentPeerID` уже создан в `AppStartup`) |
 | `HomeView` | `HomeViewModel` | «Создать комнату», «Войти по QR», «История» |
 | `CreateRoomView` | `CreateRoomViewModel` | Ввод пароля → создание комнаты |
 | `RoomQRCodeView` | — | QR приглашения (sheet из чата хоста) |
@@ -1233,37 +1271,52 @@ protocol HistoryServicing: Sendable {
 
 ## 13. Composition Root и внедрение зависимостей
 
-Единственное место, где создаются конкретные типы:
+Единственное место, где создаются конкретные типы, — папка `App/`:
 
 ```swift
+/// Результат запуска: либо все зависимости готовы, либо понятная ошибка.
+enum AppStartup {
+    case ready(AppEnvironment)
+    case failed(String)
+
+    /// KeychainStore → IdentityProvider (генерация PermanentPeerID при первом запуске)
+    /// → PersistenceController → CoreDataStorageManager → … Любая ошибка → .failed.
+    @MainActor static func live() -> AppStartup
+}
+
 @main
 struct MeshChatApp: App {
-    @State private var environment = AppEnvironment.live()
+    @State private var startup = AppStartup.live()
 
     var body: some Scene {
         WindowGroup {
-            RootView()
-                .environment(environment)
+            switch startup {
+            case .ready(let environment):
+                RootView(environment: environment)
+            case .failed(let message):
+                StartupErrorView(message: message)
+            }
         }
     }
 }
 
-@Observable @MainActor
-final class AppEnvironment {
+/// Неизменяемый контейнер зависимостей (только протоколы).
+struct AppEnvironment: Sendable {
     let identity: any IdentityProviding
     let storage: any StorageManaging
-    let rooms: any RoomServicing
-    let history: any HistoryServicing
-    let startupError: String?
+    // Добавляются в своих этапах: rooms: any RoomServicing (6), history: any HistoryServicing (10)
 
-    static func live() -> AppEnvironment { /* KeychainStore, PersistenceController, CoreDataStorageManager,
-                                              RoomCredentialsFactory, MeshNetworkService, RoomService… */ }
-    static func preview() -> AppEnvironment { /* фейки + in-memory хранилище */ }
+    #if DEBUG
+    @MainActor static func preview() -> AppEnvironment { /* фейки + in-memory хранилище */ }
+    #endif
 }
 ```
 
 - Синглтонов (`static let shared`) в проекте нет.
-- Если хранилище не загрузилось, `live()` заполняет свойство `startupError: String?`, и `RootView` показывает экран ошибки вместо падения приложения.
+- Зависимости передаются во View **явно через `init`**, без `.environment(...)`. Presentation может принимать `AppEnvironment` как контейнер протоколов, но никогда не обращается к конкретным реализациям (`KeychainStore`, `CoreDataStorageManager`…).
+- ViewModel создаёт View-владелец: `@State private var viewModel` с начальным значением в `init`.
+- Все зависимости `AppEnvironment` не опциональны: если что-то не создалось, окружения просто нет, а пользователь видит `StartupErrorView` вместо падения приложения.
+- Фейки для SwiftUI Previews лежат в `App/Preview/` под `#if DEBUG` и в Release-сборку не попадают.
 
 ---
 
@@ -1274,7 +1327,14 @@ final class AppEnvironment {
 ```swift
 enum IdentityError: Error, Sendable, Equatable {
     case keychain(status: Int32)
+    case corruptedIdentity         // в Keychain не 16 байт
     case invalidNickname
+}
+
+// Security/KeychainError.swift — внутренняя ошибка слоя Security
+enum KeychainError: Error, Sendable, Equatable {
+    case duplicateItem
+    case unexpectedStatus(Int32)
 }
 
 enum InviteError: Error, Sendable, Equatable {
@@ -1374,7 +1434,16 @@ enum NetworkError: Error, Sendable, Equatable {
 
 - Swift 6 language mode, iOS Deployment Target **17.0** (друзья с устройствами постарше тоже смогут участвовать в тестах).
 - Сборка без предупреждений.
-- Если в проекте включён `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` (так делают шаблоны новых версий Xcode), все типы вне Presentation/App явно помечаются `nonisolated` или являются `actor`. Presentation и App остаются на главном акторе.
+- В проекте включён `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` (так делают шаблоны новых версий Xcode). Все типы вне Presentation/App явно помечаются `nonisolated` или являются `actor`. Presentation и App остаются на главном акторе.
+- Приёмы, найденные на задаче 01:
+
+  | Ситуация | Решение |
+  |---|---|
+  | `static let` не-`Sendable` типа (например, `NSManagedObjectModel`) | `nonisolated(unsafe) static let` + комментарий, почему безопасно |
+  | Obj-C-глобалы вроде `NSMergeByPropertyObjectTrumpMergePolicy` | Swift-API: `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)` |
+  | `fetchRequest()` в расширениях сущностей | Не используется; запросы строятся в `CoreDataStorageManager` через `NSFetchRequest<T>(entityName: T.entityName)` |
+
+- `nonisolated(unsafe)` и `@unchecked Sendable` — только с комментарием, объясняющим безопасность.
 
 ### 17.2. Стиль
 
@@ -1458,3 +1527,17 @@ docs(architecture): describe TLS-PSK channel security
 | 9 | Шифрование канала | TLS-PSK, проверка на двух устройствах | ADR-03, §7.4 |
 | 10 | История | Экраны истории, удаление сессий | §10.4, §12 |
 | 11 | Финиш | Обработка ошибок в UI, README со скриншотами, ручные тесты §16.2, тег `v1.0` | §14–16 |
+
+---
+
+## 19. Журнал изменений
+
+### v1.1 — после задачи 01
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| §10.2 | `Message.session` optional в модели и в Swift-классе; инвариант держит `StorageManager` | Ограничение Core Data: uniqueness constraint + обязательная to-one обратная связь несовместимы |
+| §10.5, §17.1 | `nonisolated(unsafe)` для модели, Swift-API merge policy, константы имён сущностей | Swift 6 + `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` |
+| §6.1, §14.1 | `KeychainStoring.write` → `add` без перезаписи; `KeychainError`; `IdentityError.corruptedIdentity` | `PermanentPeerID` не должен меняться даже при гонке двух первых вызовов |
+| §13 | `AppStartup` (`.ready` / `.failed`) вместо поля `startupError`; `AppEnvironment` — неизменяемая структура; зависимости во View — через `init` | Зависимости окружения не опциональны, ошибка запуска — отдельное состояние, Presentation не зависит от контейнера через `.environment` |
+| §6.1 | `NicknamePolicy` в Domain | Одно правило ника для онбординга, Keychain-слоя и проверки хэндшейка |
