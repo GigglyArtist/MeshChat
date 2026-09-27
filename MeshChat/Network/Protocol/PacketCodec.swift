@@ -11,9 +11,7 @@ nonisolated struct PacketCodec: Sendable {
 
     /// Поддерживаемая версия протокола.
     static let protocolVersion = 1
-    /// Максимальная длина JSON-части кадра в байтах.
-    static let maxFrameLength = 65_536
-
+    
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -45,7 +43,7 @@ nonisolated struct PacketCodec: Sendable {
     nonisolated func encodeFrame(_ packet: Packet) throws -> Data {
         let json = try encodeToJSON(packet)
         let byteCount = json.count
-        guard byteCount <= PacketCodec.maxFrameLength else {
+        guard byteCount <= FrameAssembler.maxFrameLength else {
             throw PacketCodecError.invalidFrameLength(byteCount)
         }
         var frame = Data(capacity: 4 + byteCount)

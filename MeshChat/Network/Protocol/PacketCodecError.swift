@@ -5,7 +5,7 @@ import Foundation
 
 /// Ошибки кодека протокола (§8.6).
 nonisolated enum PacketCodecError: Error, Sendable, Equatable {
-    /// Длина кадра равна 0 или превышает `PacketCodec.maxFrameLength`.
+    /// Длина кадра равна 0 или превышает `FrameAssembler.maxFrameLength`.
     case invalidFrameLength(Int)
     /// JSON недействителен или в нём нет обязательных полей `v` / `type`.
     case malformedJSON

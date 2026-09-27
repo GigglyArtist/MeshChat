@@ -208,7 +208,7 @@ struct PacketCodecTests {
             _ = try codec.encodeFrame(packet)
             Issue.record("Expected invalidFrameLength, but no error was thrown")
         } catch PacketCodecError.invalidFrameLength(let len) {
-            #expect(len > PacketCodec.maxFrameLength)
+            #expect(len > FrameAssembler.maxFrameLength)
         } catch {
             Issue.record("Wrong error type: \(error)")
         }

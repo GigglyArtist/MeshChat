@@ -12,6 +12,9 @@ import Foundation
 /// Когда `readOffset > buffer.count / 2`, потреблённые байты выбрасываются одним `removeSubrange`.
 nonisolated struct FrameAssembler: Sendable {
 
+    /// Максимальная длина JSON-тела кадра в байтах (§8.1).
+    static let maxFrameLength = 65_536
+
     private var buffer = Data()
     private var readOffset = 0
 
@@ -41,7 +44,7 @@ nonisolated struct FrameAssembler: Sendable {
                        |  UInt32(b3)
             let bodyLength = Int(length)
 
-            guard bodyLength > 0, bodyLength <= PacketCodec.maxFrameLength else {
+            guard bodyLength > 0, bodyLength <= FrameAssembler.maxFrameLength else {
                 throw PacketCodecError.invalidFrameLength(bodyLength)
             }
 
