@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.1 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.2 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -214,7 +214,7 @@ flowchart TD
 | **Storage** | `Foundation`, `CoreData`, Domain | `SwiftUI`, `Network` |
 | **Network** | `Foundation`, `Network`, `CryptoKit`, `Security` (фреймворк), `os`, Domain | `SwiftUI`, `CoreData` |
 | **Application** | `Foundation`, `os`, Domain | `SwiftUI`, `CoreData`, `Network` |
-| **Presentation** | `SwiftUI`, `UIKit`, `Observation`, `VisionKit`, `CoreImage`, Domain, Application | `CoreData`, `Network` |
+| **Presentation** | `SwiftUI`, `UIKit`, `Observation`, `VisionKit`, `AVFoundation` (только разрешение камеры), `CoreImage`, Domain, Application | `CoreData`, `Network` |
 | **App** | всё | — |
 
 > Соблюдение правила можно проверить командой `grep -rn "import CoreData" <App>/ | grep -v "/Storage/"` — вывод должен быть пустым (аналогично для `import Network` вне `/Network/`).
@@ -451,7 +451,7 @@ permanentPeerID():
 ### 6.3. Ключ комнаты и производные ключи
 
 ```text
-salt       = 32 случайных байта (новые для каждой комнаты, нигде не сохраняются)
+salt       = 32 случайных байта из SymmetricKey(size: .bits256) (новые для каждой комнаты, нигде не сохраняются)
 roomKey    = HKDF<SHA256>(ikm: UTF8(password), salt: salt, info: "meshchat/room-key/v1", 32 байта)
 tlsPSK     = HMAC<SHA256>(key: roomKey, data: "meshchat/tls-psk/v1")
 authToken  = HMAC<SHA256>(key: roomKey, data: "meshchat/auth/v1|" + permanentPeerID.uuidString)
@@ -478,19 +478,51 @@ protocol RoomSecretProviding: Sendable {
 }
 
 // Security/RoomCredentials.swift
-struct RoomCredentials: RoomSecret { /* SymmetricKey внутри, HKDF и HMAC из CryptoKit */ }
-struct RoomCredentialsFactory: RoomSecretProviding { /* SecRandomCopyBytes для соли */ }
+/// Хранит 32 байта ключа как Data (Sendable), SymmetricKey создаёт по месту.
+struct RoomCredentials: RoomSecret { init(roomKeyData: Data) throws /* InviteError.invalidKey, если не 32 байта */ }
+// Security/RoomCredentialsFactory.swift
+struct RoomCredentialsFactory: RoomSecretProviding {
+    /// Чистая функция вывода ключа — отдельно, чтобы проверять её контрольными значениями.
+    static func deriveRoomKey(password: String, salt: Data) -> Data
+}
 ```
+
+**Пароль комнаты** (`Domain/Models/RoomPasswordPolicy.swift`): используется как есть, без обрезки пробелов; длина 4…64 символа; строка только из пробелов недопустима. Криптографическую стойкость ключу даёт соль, пароль — утверждённая часть сценария хоста (ADR-04). Пароль хранится только в поле ввода и очищается сразу после создания комнаты.
+
+**Контрольные значения** (RFC 5869 HKDF-SHA256, сверены двумя независимыми реализациями). Соль — байты `00 01 02 … 1f`, `peerID = 0F8E4A4C-6C7B-4E36-9F37-2B0B7B0F6A11`:
+
+| Пароль | Значение | hex |
+|---|---|---|
+| `correct horse` | `roomKey` | `daaa69f872987f5f5d97fe64b7ab3ebabd3f6865f149b8db41413404d0639798` |
+| | `tlsPSK` | `5b5d095ba4be7c00317ad22287331e2aa89047f90000216b21daa68ae4ad74ea` |
+| | `authToken` | `6671cee409443c8c4c39995a5a53f191a04c3187efdcdbf2022dbda6999b6e19` |
+| `пароль1234` | `roomKey` | `cef560cb64a7e34b7933bdeec0ecef23050e5b78f291e40b3bbd50a35b46e72f` |
+| | `tlsPSK` | `dd0f870b294ec9eaeebea44010d701725f8ff9fe66cc7e91727d198fec823a0d` |
+| | `authToken` | `4c8d08408f6969405ac78f730a9d77b2693e7994f5f19478b40a85003d936179` |
+
+Вторая строка проверяет, что кириллица кодируется в UTF-8 одинаково на всех устройствах.
 
 ### 6.4. Формат QR
 
-QR кодирует компактный JSON (генерация — `CIFilter.qrCodeGenerator()`, сканирование — `DataScannerViewController` из VisionKit):
+QR кодирует компактный JSON. Кодирование — `JSONEncoder` с `outputFormatting = [.sortedKeys, .withoutEscapingSlashes]`, поэтому строка детерминирована. Контрольный пример (ключ `roomKey` для `correct horse` из §6.3):
 
 ```json
-{ "app": "meshchat", "v": 1, "svc": "6B1F2C8E-3D4A-4F5B-9C7D-8E9F0A1B2C3D", "key": "q7Xk2vN9…base64…" }
+{"app":"meshchat","key":"2qpp+HKYf19dl/5kt6s+ur0/aGXxSbjbQUE0BNBjl5g=","svc":"6B1F2C8E-3D4A-4F5B-9C7D-8E9F0A1B2C3D","v":1}
 ```
 
-Клиент отклоняет QR, если `app != "meshchat"`, `v` не поддерживается или ключ не равен 32 байтам.
+API в Domain (`RoomInvite`): `func qrPayload() throws -> String` и `static func parse(qrPayload: String) throws -> RoomInvite`. Разбор бросает `InviteError`:
+
+| Ситуация | Ошибка |
+|---|---|
+| Не JSON, нет полей, битый base64, `app != "meshchat"`, `svc` — не UUID | `notMeshChatCode` |
+| `v` ≠ 1 | `unsupportedVersion(v)` |
+| Ключ не 32 байта | `invalidKey` |
+
+**Генерация:** `QRCodeGenerator` (Presentation/Shared) — `CIFilter.qrCodeGenerator()`, коррекция ошибок `M`, масштабирование без сглаживания (`.interpolation(.none)`).
+
+**Сканирование:** `DataScannerViewController` (VisionKit) только для `.barcode(symbologies: [.qr])`. Он работает на всех устройствах с iOS 17 (чип A12 и новее), но **не работает в симуляторе** (`isSupported == false`). Разрешение камеры проверяется через `AVCaptureDevice.authorizationStatus(for: .video)`; при отказе экран предлагает открыть Настройки.
+
+**Отладка в симуляторе (только `#if DEBUG`):** на экране QR хоста есть кнопка «Скопировать код», на экране входа — поле «Вставить код». В Release-сборке их нет.
 
 ---
 
@@ -1234,15 +1266,17 @@ protocol HistoryServicing: Sendable {
 | `StartupErrorView` | — | Хранилище или Keychain не инициализировались |
 | `RootView` | `RootViewModel` | Выбор ветки: онбординг или главный экран |
 | `OnboardingView` | `OnboardingViewModel` | Первый запуск: ввод никнейма (`PermanentPeerID` уже создан в `AppStartup`) |
-| `HomeView` | `HomeViewModel` | «Создать комнату», «Войти по QR», «История» |
-| `CreateRoomView` | `CreateRoomViewModel` | Ввод пароля → создание комнаты |
-| `RoomQRCodeView` | — | QR приглашения (sheet из чата хоста) |
+| `HomeView` | — | «Создать комнату», «Войти по QR», «История». Только навигация через замыкания, ViewModel не нужен |
+| `CreateRoomView` | `CreateRoomViewModel` | Ввод пароля → создание комнаты → `RoomQRCodeView` |
+| `RoomQRCodeView` | — | QR приглашения (с этапа 7 — sheet из чата хоста) |
 | `JoinRoomView` | `JoinRoomViewModel` | Сканер QR (VisionKit) → подключение |
+
+**Временная схема этапов 3–5** (до появления сети): `CreateRoomViewModel` сам создаёт секрет через `RoomSecretProviding` и приглашение со случайным `serviceName`, а `JoinRoomViewModel` только проверяет QR и показывает «Приглашение распознано». На этапе 6 оба переходят на `RoomServicing.createRoom` / `joinRoom`, и `serviceName` начинает генерировать `HostSession` (§7.5).
 | `ChatView` | `ChatViewModel` | Лента, ввод, участники, баннеры состояния |
 | `PeersListView` | `HistoryViewModel` | Известные собеседники |
 | `PeerHistoryView` | `PeerHistoryViewModel` | Сессии и сообщения с одним человеком (только чтение) |
 
-Навигация: `NavigationStack` с `enum Route: Hashable` в `RootView`.
+Навигация: `NavigationStack(path:)` с `enum Route: Hashable { case createRoom, joinRoom }` в `RootView` (список маршрутов растёт по этапам).
 
 ### 12.2. Правила
 
@@ -1304,6 +1338,7 @@ struct MeshChatApp: App {
 struct AppEnvironment: Sendable {
     let identity: any IdentityProviding
     let storage: any StorageManaging
+    let secrets: any RoomSecretProviding        // с этапа 3
     // Добавляются в своих этапах: rooms: any RoomServicing (6), history: any HistoryServicing (10)
 
     #if DEBUG
@@ -1518,7 +1553,7 @@ docs(architecture): describe TLS-PSK channel security
 |---|---|---|---|
 | 1 | Конфигурация + Storage | `Info.plist` с Bonjour, Swift 6, модель Core Data, `StorageManager`, тесты | §4, §10, §17 |
 | 2 | Identity + онбординг | Keychain, `PermanentPeerID`, ввод ника, `AppEnvironment`, `RootView` | §6.1–6.2, §12, §13 |
-| 3 | Секрет комнаты + QR | `RoomCredentials`, `RoomInvite`, генерация и сканирование QR | §6.3–6.4 |
+| 3 | Секрет комнаты + QR | `RoomCredentials`, `RoomInvite`, генерация и сканирование QR, экраны создания и входа (пока без сети) | §6.3–6.4, §12 |
 | 4 | Протокол | `Packet`, `PacketCodec`, `FrameAssembler`, тесты | §8 |
 | 5 | Транспорт | `NWPeerConnection`, `BonjourHostListener`, `BonjourClientConnector` (DEBUG без TLS) | §7.1–7.4 |
 | 6 | Хэндшейк и сессии | `HostSession`, `ClientSession`, лимит 4, `ActiveRoom` + привязка к истории | §7.5–7.6, §11 |
@@ -1541,3 +1576,13 @@ docs(architecture): describe TLS-PSK channel security
 | §6.1, §14.1 | `KeychainStoring.write` → `add` без перезаписи; `KeychainError`; `IdentityError.corruptedIdentity` | `PermanentPeerID` не должен меняться даже при гонке двух первых вызовов |
 | §13 | `AppStartup` (`.ready` / `.failed`) вместо поля `startupError`; `AppEnvironment` — неизменяемая структура; зависимости во View — через `init` | Зависимости окружения не опциональны, ошибка запуска — отдельное состояние, Presentation не зависит от контейнера через `.environment` |
 | §6.1 | `NicknamePolicy` в Domain | Одно правило ника для онбординга, Keychain-слоя и проверки хэндшейка |
+
+### v1.2 — перед задачей 03
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| §6.3 | Соль из `SymmetricKey(size: .bits256)`; `RoomCredentials` хранит `Data`; `RoomPasswordPolicy`; контрольные значения HKDF/HMAC | Нет необрабатываемых ошибок `SecRandomCopyBytes`; `Sendable` без оговорок; криптографию можно проверить точными тестами |
+| §6.4 | Детерминированный JSON QR, таблица ошибок разбора, DEBUG-обход сканера в симуляторе | `DataScannerViewController` не работает в симуляторе |
+| §3 | Presentation может импортировать `AVFoundation` для запроса доступа к камере | Сканер QR |
+| §12.1 | `HomeView` без ViewModel; временная схема создания/входа до этапа 6 | Не писать пустой ViewModel и не ждать сеть, чтобы проверить QR на устройствах |
+| §13 | `AppEnvironment.secrets` | Экраны создания и входа |

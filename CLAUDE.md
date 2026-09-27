@@ -19,7 +19,7 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
 | `Storage/` | Foundation, CoreData | SwiftUI, Network |
 | `Network/` | Foundation, Network, CryptoKit, Security, os | SwiftUI, CoreData |
 | `Application/` | Foundation, os | SwiftUI, CoreData, Network |
-| `Presentation/` | SwiftUI, UIKit, Observation, VisionKit, CoreImage | CoreData, Network |
+| `Presentation/` | SwiftUI, UIKit, Observation, VisionKit, AVFoundation (только разрешение камеры), CoreImage | CoreData, Network |
 | `App/` | всё | — |
 
 Слои общаются только через протоколы из `Domain/Protocols`. Конкретные типы создаются только в `App/` (`AppStartup`, `AppEnvironment`). Во View зависимости передаются через `init`, без `.environment(...)`.
@@ -73,9 +73,15 @@ xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=iPhone 16 
 - Перед коммитом: `git status` и `git diff --staged --stat`. Список файлов в индексе должен совпадать с файлами именно этого коммита. Инструмент записи файлов может добавлять их в индекс сам — лишние убирай через `git restore --staged <file>`. Никогда не коммить `xcuserdata/`, `DerivedData/`, `.DS_Store`.
 - Не делай `git push`, `--force`, `rebase`, `--amend` уже опубликованных коммитов.
 
-## Отчёт после задачи
+## Порядок шагов
 
-1. Список созданных и изменённых файлов.
-2. `git log --oneline` новых коммитов.
-3. Итог сборки и тестов (сколько тестов, все ли зелёные).
-4. Отклонения от задачи и открытые вопросы, если есть.
+Каждый коммит должен собираться. Если шаг задачи не компилируется без файла из следующего шага — перенеси этот файл в текущий шаг и укажи это в отчёте.
+
+## Отчёт после задачи (строго по шаблону)
+
+1. **Проверки из промпта** — дословный вывод всех команд, которые промпт просит «вывести в отчёт». Нельзя пересказывать своими словами или пропускать.
+2. **Файлы** — созданные, изменённые, удалённые, перемещённые.
+3. **Коммиты** — `git log --oneline --decorate` новых коммитов. Сверь с планом коммитов из промпта: если какие-то объединены, разделены или пропущены — перечисли и объясни.
+4. **Тег** — вывод `git tag --points-at HEAD`.
+5. **Тесты** — сколько всего, сколько новых, все ли зелёные.
+6. **Отклонения и вопросы** — всё, что сделано не так, как написано в промпте, включая пути к файлам.
