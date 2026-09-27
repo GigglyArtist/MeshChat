@@ -8,8 +8,9 @@ import CryptoKit
 /// Живёт только в памяти, никогда не сериализуется.
 nonisolated struct RoomCredentials: RoomSecret {
 
-    private static let tlsContext: StaticString = "meshchat/tls-psk/v1"
-    private static let authContext: StaticString = "meshchat/auth-token/v1"
+    // Data — Sendable и неизменяем после инициализации static let: доступ из любого контекста безопасен.
+    nonisolated(unsafe) private static let tlsPSKData = Data("meshchat/tls-psk/v1".utf8)
+    nonisolated(unsafe) private static let authContextPrefix = "meshchat/auth/v1|"
 
     let roomKeyData: Data
     let tlsPreSharedKey: Data
@@ -19,42 +20,23 @@ nonisolated struct RoomCredentials: RoomSecret {
         guard roomKeyData.count == 32 else { throw InviteError.invalidKey }
         self.roomKeyData = roomKeyData
 
+        // tlsPSK = HMAC<SHA256>(key: roomKey, data: "meshchat/tls-psk/v1") — §6.3
         let masterKey = SymmetricKey(data: roomKeyData)
-        let tlsContext = RoomCredentials.tlsContext
-        let tlsData = tlsContext.withUTF8Buffer { Data($0) }
         self.tlsPreSharedKey = Data(
-            HKDF<SHA256>.deriveKey(
-                inputKeyMaterial: masterKey,
-                info: tlsData,
-                outputByteCount: 32
-            ).withUnsafeBytes { $0 }
+            HMAC<SHA256>.authenticationCode(for: RoomCredentials.tlsPSKData, using: masterKey)
         )
     }
 
     func authToken(for peerID: UUID) -> Data {
+        // authToken = HMAC<SHA256>(key: roomKey, data: "meshchat/auth/v1|" + peerID.uuidString) — §6.3
         let masterKey = SymmetricKey(data: roomKeyData)
-        let authContext = RoomCredentials.authContext
-        let contextData = authContext.withUTF8Buffer { Data($0) }
-        let tokenKey = HKDF<SHA256>.deriveKey(
-            inputKeyMaterial: masterKey,
-            info: contextData,
-            outputByteCount: 32
-        )
-        var message = peerID.data
-        let mac = HMAC<SHA256>.authenticationCode(for: message, using: tokenKey)
-        return Data(mac)
+        let message = Data((RoomCredentials.authContextPrefix + peerID.uuidString).utf8)
+        return Data(HMAC<SHA256>.authenticationCode(for: message, using: masterKey))
     }
 
     func isValidAuthToken(_ token: Data, for peerID: UUID) -> Bool {
         let masterKey = SymmetricKey(data: roomKeyData)
-        let authContext = RoomCredentials.authContext
-        let contextData = authContext.withUTF8Buffer { Data($0) }
-        let tokenKey = HKDF<SHA256>.deriveKey(
-            inputKeyMaterial: masterKey,
-            info: contextData,
-            outputByteCount: 32
-        )
-        let message = peerID.data
-        return HMAC<SHA256>.isValidAuthenticationCode(token, authenticating: message, using: tokenKey)
+        let message = Data((RoomCredentials.authContextPrefix + peerID.uuidString).utf8)
+        return HMAC<SHA256>.isValidAuthenticationCode(token, authenticating: message, using: masterKey)
     }
 }

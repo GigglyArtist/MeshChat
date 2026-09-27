@@ -7,31 +7,35 @@ import CryptoKit
 /// Создаёт и восстанавливает `RoomCredentials` из пароля или QR-приглашения (§6.3).
 nonisolated struct RoomCredentialsFactory: RoomSecretProviding {
 
-    private static let hkdfContext: StaticString = "meshchat/room-key/v1"
+    // Data — Sendable и неизменяем после инициализации static let: доступ из любого контекста безопасен.
+    nonisolated(unsafe) private static let hkdfContext = Data("meshchat/room-key/v1".utf8)
 
     func makeSecret(password: String) -> any RoomSecret {
-        var salt = Data(count: 32)
-        _ = salt.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+        // salt = 32 случайных байта из SymmetricKey(size: .bits256) — §6.3
+        let saltKey = SymmetricKey(size: .bits256)
+        let salt = saltKey.withUnsafeBytes { Data($0) }
         let roomKey = RoomCredentialsFactory.deriveRoomKey(password: password, salt: salt)
-        // salt не включается в roomKeyData — ключ уже финальный
-        return try! RoomCredentials(roomKeyData: roomKey) // 32 байта гарантированы
+        // deriveRoomKey гарантирует ровно 32 байта — RoomCredentials.init никогда не бросит
+        do {
+            return try RoomCredentials(roomKeyData: roomKey)
+        } catch {
+            fatalError("deriveRoomKey guarantees 32 bytes: \(error)")
+        }
     }
 
     func secret(from invite: RoomInvite) throws -> any RoomSecret {
         try RoomCredentials(roomKeyData: invite.roomKey)
     }
 
-    /// HKDF-SHA256: из пароля (UTF-8) и случайной соли получает 32-байтовый ключ.
+    /// HKDF-SHA256: из пароля (UTF-8) и соли получает 32-байтовый ключ комнаты — §6.3.
     static func deriveRoomKey(password: String, salt: Data) -> Data {
-        let passwordData = Data(password.utf8)
-        let inputKey = SymmetricKey(data: passwordData)
-        let context = hkdfContext.withUTF8Buffer { Data($0) }
+        let inputKey = SymmetricKey(data: Data(password.utf8))
         let derived = HKDF<SHA256>.deriveKey(
             inputKeyMaterial: inputKey,
             salt: salt,
-            info: context,
+            info: hkdfContext,
             outputByteCount: 32
         )
-        return Data(derived.withUnsafeBytes { $0 })
+        return derived.withUnsafeBytes { Data($0) }
     }
 }
