@@ -4,21 +4,37 @@
 import SwiftUI
 
 /// Главный экран: создать комнату, войти по QR, история (§12.1).
-/// Полная реализация добавляется в этапах 3–10 дорожной карты.
 struct HomeView: View {
 
+    let nickname: String
+    let onCreateRoom: () -> Void
+    let onJoinRoom: () -> Void
+
     var body: some View {
-        NavigationStack {
-            ContentUnavailableView(
-                "MeshChat",
-                systemImage: "antenna.radiowaves.left.and.right",
-                description: Text("Создайте комнату или войдите по QR-коду.")
-            )
-            .navigationTitle("MeshChat")
+        List {
+            Section {
+                Button(action: onCreateRoom) {
+                    Label("Создать комнату", systemImage: "plus.circle.fill")
+                }
+                Button(action: onJoinRoom) {
+                    Label("Войти по QR", systemImage: "qrcode.viewfinder")
+                }
+            }
+
+            Section("История") {
+                Text("История сессий появится здесь.")
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(true)
         }
+        .navigationTitle(nickname)
     }
 }
 
+#if DEBUG
 #Preview {
-    HomeView()
+    NavigationStack {
+        HomeView(nickname: "Preview", onCreateRoom: {}, onJoinRoom: {})
+    }
 }
+#endif

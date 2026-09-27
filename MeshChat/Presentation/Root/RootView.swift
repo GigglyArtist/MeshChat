@@ -21,7 +21,28 @@ struct RootView: View {
                 viewModel.didCompleteOnboarding()
             }
         case .home:
-            HomeView()
+            homeNavigationStack
+        }
+    }
+
+    private var homeNavigationStack: some View {
+        NavigationStack(path: $viewModel.navigationPath) {
+            HomeView(
+                nickname: environment.identity.nickname() ?? "",
+                onCreateRoom: { viewModel.navigate(to: .createRoom) },
+                onJoinRoom: { viewModel.navigate(to: .joinRoom) }
+            )
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .createRoom:
+                    CreateRoomView(
+                        secrets: environment.secrets,
+                        peerID: (try? environment.identity.permanentPeerID()) ?? UUID()
+                    )
+                case .joinRoom:
+                    JoinRoomView(secrets: environment.secrets)
+                }
+            }
         }
     }
 }

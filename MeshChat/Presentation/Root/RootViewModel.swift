@@ -12,6 +12,7 @@ import Observation
     }
 
     private(set) var destination: Destination
+    var navigationPath: [Route] = []
 
     init(identity: any IdentityProviding) {
         destination = identity.nickname() == nil ? .onboarding : .home
@@ -20,5 +21,9 @@ import Observation
     /// Вызывается после завершения онбординга; переключает на главный экран.
     func didCompleteOnboarding() {
         destination = .home
+    }
+
+    func navigate(to route: Route) {
+        navigationPath.append(route)
     }
 }
