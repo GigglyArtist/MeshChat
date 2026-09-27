@@ -7,8 +7,7 @@ import CryptoKit
 /// Создаёт и восстанавливает `RoomCredentials` из пароля или QR-приглашения (§6.3).
 nonisolated struct RoomCredentialsFactory: RoomSecretProviding {
 
-    // Data — Sendable и неизменяем после инициализации static let: доступ из любого контекста безопасен.
-    nonisolated(unsafe) private static let hkdfContext = Data("meshchat/room-key/v1".utf8)
+    nonisolated private static let hkdfContext = Data("meshchat/room-key/v1".utf8)
 
     func makeSecret(password: String) -> any RoomSecret {
         // salt = 32 случайных байта из SymmetricKey(size: .bits256) — §6.3

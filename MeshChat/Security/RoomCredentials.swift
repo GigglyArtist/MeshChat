@@ -8,9 +8,8 @@ import CryptoKit
 /// Живёт только в памяти, никогда не сериализуется.
 nonisolated struct RoomCredentials: RoomSecret {
 
-    // Data — Sendable и неизменяем после инициализации static let: доступ из любого контекста безопасен.
-    nonisolated(unsafe) private static let tlsPSKData = Data("meshchat/tls-psk/v1".utf8)
-    nonisolated(unsafe) private static let authContextPrefix = "meshchat/auth/v1|"
+    nonisolated private static let tlsPSKData = Data("meshchat/tls-psk/v1".utf8)
+    nonisolated private static let authContextPrefix = "meshchat/auth/v1|"
 
     let roomKeyData: Data
     let tlsPreSharedKey: Data
