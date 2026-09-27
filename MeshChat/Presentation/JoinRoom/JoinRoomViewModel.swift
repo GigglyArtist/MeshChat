@@ -56,5 +56,10 @@ import Foundation
     func handleDebugPaste() {
         handleScan(debugPayloadInput)
     }
+
+    /// Только для юнит-тестов: устанавливает состояние напрямую, минуя логику камеры.
+    func forceSetStateForTesting(_ newState: State) {
+        state = newState
+    }
     #endif
 }

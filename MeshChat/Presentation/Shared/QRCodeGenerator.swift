@@ -6,12 +6,12 @@ import Foundation
 
 /// Генерирует `CIImage` QR-кода из строки (§6.4).
 /// Коррекция ошибок M, масштаб ×10.
-struct QRCodeGenerator {
+nonisolated struct QRCodeGenerator {
 
-    static let scale = 10
+    nonisolated static let scale = 10
 
     /// - Returns: `CIImage` или `nil`, если фильтр недоступен (никогда на iOS 17+).
-    func generate(from string: String) -> CIImage? {
+    nonisolated func generate(from string: String) -> CIImage? {
         guard
             let filter = CIFilter(name: "CIQRCodeGenerator"),
             let data = string.data(using: .utf8)
