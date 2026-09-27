@@ -3,6 +3,7 @@
 
 import Testing
 import CoreImage
+import UIKit
 import Foundation
 @testable import MeshChat
 
@@ -11,7 +12,7 @@ struct QRCodeGeneratorTests {
 
     private let generator = QRCodeGenerator()
 
-    @Test("Генерирует CIImage для непустой строки")
+    @Test("Генерирует UIImage для непустой строки")
     func generateNonEmpty() {
         let image = generator.generate(from: "hello")
         #expect(image != nil)
@@ -19,23 +20,24 @@ struct QRCodeGeneratorTests {
 
     @Test("Результирующий размер соответствует масштабу ×10")
     func scaleApplied() {
-        let image = generator.generate(from: "A")
-        // QR версии 1 — 21×21 модулей; с тихой зоной ≥ 25×25 модулей ×10 ≥ 250 пикселей
-        if let img = image {
-            #expect(img.extent.width >= 210)
-            #expect(img.extent.height >= 210)
-        } else {
+        guard let image = generator.generate(from: "A") else {
             Issue.record("generate(from:) вернул nil")
+            return
         }
+        // QR версии 1 — 21×21 модулей; с тихой зоной ≥ 25×25 модулей ×10 ≥ 250 пикселей
+        #expect(image.size.width >= 210)
+        #expect(image.size.height >= 210)
     }
 
     @Test("Roundtrip: строка кодируется в QR и детектируется обратно через CIDetector")
-    func roundtripWithCIDetector() throws {
+    func roundtripWithCIDetector() {
         let original = "meshchat-test-string"
-        guard let ciImage = generator.generate(from: original) else {
-            Issue.record("generate вернул nil")
+        guard let uiImage = generator.generate(from: original),
+              let cgImage = uiImage.cgImage else {
+            Issue.record("generate вернул nil или не имеет cgImage")
             return
         }
+        let ciImage = CIImage(cgImage: cgImage)
         let context = CIContext()
         let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: context, options: [
             CIDetectorAccuracy: CIDetectorAccuracyHigh

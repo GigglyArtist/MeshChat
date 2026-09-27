@@ -17,8 +17,8 @@ struct CreateRoomView: View {
             switch viewModel.state {
             case .editing:
                 editingView
-            case .ready(let invite):
-                RoomQRCodeView(invite: invite)
+            case .ready(let qrPayload):
+                RoomQRCodeView(qrPayload: qrPayload)
             case .failed(let message):
                 ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(message))
             }

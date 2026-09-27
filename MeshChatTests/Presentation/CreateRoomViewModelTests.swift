@@ -71,15 +71,16 @@ struct CreateRoomViewModelTests {
     }
 
     @Test("serviceName в приглашении совпадает с peerID")
-    func serviceNameMatchesPeerID() {
+    func serviceNameMatchesPeerID() throws {
         let peerID = UUID()
         let vm = makeViewModel(peerID: peerID)
         vm.passwordInput = "secret123"
         vm.createRoom()
-        guard case .ready(let invite) = vm.state else {
+        guard case .ready(let qrPayload) = vm.state else {
             Issue.record("Expected .ready")
             return
         }
+        let invite = try RoomInvite.parse(qrPayload: qrPayload)
         #expect(invite.serviceName == peerID.uuidString)
     }
 }

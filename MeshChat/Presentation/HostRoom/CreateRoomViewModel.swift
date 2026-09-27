@@ -2,13 +2,16 @@
 // Copyright (C) 2026 MeshChat contributors
 
 import Foundation
+import os
+
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.meshchat", category: "ui")
 
 /// ViewModel экрана создания комнаты (§12.1).
 @Observable @MainActor final class CreateRoomViewModel {
 
     enum State {
         case editing
-        case ready(invite: RoomInvite)
+        case ready(qrPayload: String)
         case failed(String)
     }
 
@@ -35,6 +38,12 @@ import Foundation
         )
         // Очищаем пароль сразу после использования — §6.3
         passwordInput = ""
-        state = .ready(invite: invite)
+        do {
+            let payload = try invite.qrPayload()
+            state = .ready(qrPayload: payload)
+        } catch {
+            logger.error("Failed to encode QR payload: \(error.localizedDescription, privacy: .public)")
+            state = .failed("Не удалось сформировать QR-код")
+        }
     }
 }
