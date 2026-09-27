@@ -34,6 +34,8 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
   - `static let` не-`Sendable` типа → `nonisolated(unsafe) static let` + комментарий; для `Sendable`-типов (`Data`, `String`, `UUID`) `nonisolated(unsafe)` **не** ставить — это предупреждение компилятора;
   - Obj-C-глобалы merge policy → `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)`;
   - запросы Core Data → `NSFetchRequest<T>(entityName: T.entityName)`, без строковых литералов имён сущностей.
+  - `Codable`-типы вне Presentation/App — `nonisolated struct`, иначе conformance станет изолированной на `MainActor` и неизолированный код не сможет кодировать;
+  - срезы `Data` сохраняют индексы исходника: индексируй от `startIndex`, наружу отдавай `Data(slice)`.
 
 ## Стиль
 

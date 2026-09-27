@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.3 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.4 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -727,7 +727,18 @@ start():
 ```
 
 - `length == 0` или `length > 65 536` → `PacketCodecError.invalidFrameLength` → соединение закрывается.
-- `FrameAssembler` принимает куски любого размера (в том числе склеенные и разрезанные кадры) и возвращает только целые кадры.
+- `FrameAssembler` принимает куски любого размера (в том числе склеенные и разрезанные кадры) и возвращает только целые кадры:
+
+  ```swift
+  struct FrameAssembler: Sendable {
+      /// Добавляет кусок потока и возвращает все кадры, которые стали целыми (только JSON, без префикса).
+      /// Бросает `invalidFrameLength`, как только прочитан недопустимый заголовок; после ошибки не используется.
+      mutating func append(_ chunk: Data) throws -> [Data]
+  }
+  ```
+
+- **Ловушка `Data`-срезов:** срез `Data` сохраняет индексы исходника, и `startIndex` не обязательно равен 0. Внутри ассемблера индексы считаются только от `startIndex`, наружу отдаются копии `Data(slice)`. Кусок, пришедший из сети, может быть срезом.
+- Буфер не копируется целиком на каждый кадр (без квадратичной сложности): хранится смещение прочитанного, а буфер периодически сжимается.
 
 ### 8.2. Конверт
 
@@ -737,7 +748,12 @@ start():
 
 - `v` — версия протокола. Неизвестная версия → соединение закрывается.
 - `type` — дискриминатор. Неизвестный `type` **после** хэндшейка игнорируется с записью в лог (совместимость с будущими версиями).
-- Кодирование: `JSONEncoder`, даты — `.millisecondsSince1970`, `Data` — base64, UUID — строка.
+- Кодирование — `JSONEncoder` с `outputFormatting = [.sortedKeys, .withoutEscapingSlashes]`: вывод детерминирован и проверяется контрольными кадрами (§8.8). Порядок ключей для получателя не важен, в примерах §8.5 он «человеческий».
+- **Даты** — целое число миллисекунд с 1970 года (`Int64`, округление вниз) через `.custom`-стратегию. Стандартная `.millisecondsSince1970` не подходит: она пишет дробное число, и дата после пересылки не совпадает с исходной. Отправитель при создании сообщения сразу округляет `timestamp` до миллисекунд, чтобы его локальная копия совпадала с копиями получателей.
+- `Data` — base64, UUID — строка в верхнем регистре (декодер принимает любой регистр).
+- Необязательные поля со значением `nil` не пишутся; декодер принимает и отсутствие поля, и `null`.
+- У пакета `leave` поле `payload` — пустой объект `{}`.
+- Кодек проверяет только **структуру**. Смысловые правила (длина ника и текста, `senderID`, фаза хэндшейка — §8.4) проверяют сессии.
 
 ### 8.3. Каталог пакетов
 
@@ -827,8 +843,12 @@ start():
 
 ### 8.6. Модель в коде
 
+Все типы — `nonisolated` (в проекте изоляция по умолчанию — `MainActor`). Иначе синтезированная conformance к `Codable` окажется изолированной на главном акторе, и неизолированный кодек не сможет её использовать. Один тип — один файл в `Network/Protocol/`.
+
 ```swift
 // Network/Protocol — DTO протокола, отдельные от доменных моделей
+enum PacketType: String, Sendable { case clientHello, hostWelcome, chatMessage, participantJoined,
+                                        participantLeft, sessionEnded, leave, ping, pong }
 struct PeerPayload: Codable, Sendable, Equatable { let permanentPeerID: UUID; let nickname: String }
 struct ClientHello: Codable, Sendable, Equatable {
     let protocolVersion: Int
@@ -876,7 +896,18 @@ enum PacketCodecError: Error, Sendable, Equatable {
     case unsupportedVersion(Int)
     case unknownType(String)
 }
+
+// Network/Protocol/PacketPayload+Domain.swift — перевод между DTO и Domain
+extension PeerPayload { init(_ profile: PeerProfile); var profile: PeerProfile { get } }
+extension MessagePayload { init(_ message: ChatMessage); var message: ChatMessage { get } }
+extension ParticipantLeftPayload {
+    init(peerID: UUID, reason: LeaveReason)
+    /// Неизвестная причина (пакет из будущей версии) трактуется как `.connectionLost`.
+    var leaveReason: LeaveReason { get }
+}
 ```
+
+Порядок проверок в `decodePayload`: не JSON или нет `v`/`type` → `malformedJSON`; `v` ≠ 1 → `unsupportedVersion(v)`; неизвестный `type` → `unknownType(type)`; `payload` не соответствует типу → `malformedJSON`.
 
 ### 8.7. Диаграммы последовательностей
 
@@ -926,6 +957,18 @@ sequenceDiagram
     X-->>B: chatMessage {senderID: A}
     X-->>C: chatMessage {senderID: A}
 ```
+
+### 8.8. Контрольные кадры
+
+Сверены с независимой реализацией (Python `json` с сортировкой ключей). Тесты сравнивают кадры **побайтно**.
+
+| Пакет | JSON (UTF-8) | Длина | Префикс (hex) |
+|---|---|---|---|
+| `chatMessage` | `{"payload":{"messageID":"9F1D0C2E-5B7A-4C3D-8E9F-0A1B2C3D4E5F","senderID":"0F8E4A4C-6C7B-4E36-9F37-2B0B7B0F6A11","text":"Привет! Я на месте.","timestamp":1790412345123},"type":"chatMessage","v":1}` | 210 | `000000d2` |
+| `clientHello` | `{"payload":{"authToken":"ZnHO5AlEPIxMOZlaWlPxkaBMMYfv3NvyAi29ppmbbhk=","nickname":"Петя","permanentPeerID":"0F8E4A4C-6C7B-4E36-9F37-2B0B7B0F6A11","protocolVersion":1},"type":"clientHello","v":1}` | 198 | `000000c6` |
+| `leave` | `{"payload":{},"type":"leave","v":1}` | 35 | `00000023` |
+
+`authToken` в `clientHello` — контрольный токен для пароля `correct horse` из §6.3, `resumeSessionID = nil` (поле не пишется). Длина — в **байтах** UTF-8, а не в символах: кириллица занимает по 2 байта.
 
 ---
 
@@ -1600,3 +1643,12 @@ docs(architecture): describe TLS-PSK channel security
 | §12.2 | UI не отказывает молча; запрет тестовых хуков в production-коде; тесты отрисовки через `ImageRenderer` | Ручная проверка: у хоста не появился QR, хотя юнит-тесты генератора зелёные — тесты проверяли генератор, но не экран |
 | §17.4 | Ошибка, найденная в уже закоммиченном коде, исправляется отдельным `fix(...)`, а не внутри `test(...)` | В задаче 03 исправление алгоритма оказалось в тестовом коммите |
 | §17.1 | `nonisolated(unsafe)` только для не-`Sendable` типов | Сборка задачи 03 дала предупреждение на `nonisolated(unsafe)` у константы `Data` |
+
+### v1.4 — перед задачей 04
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| §8.1 | API `FrameAssembler`, ловушка `Data`-срезов, буфер без квадратичного копирования | Самые частые ошибки при разборе TCP-потока |
+| §8.2 | Детерминированный JSON; даты — целые миллисекунды `Int64`; `nil` не пишется; `leave` с `{}`; кодек проверяет только структуру | Контрольные кадры и точное совпадение дат после пересылки |
+| §8.6 | `PacketType`, `nonisolated`-DTO, перевод DTO ↔ Domain, порядок ошибок декодирования | Изоляция `MainActor` по умолчанию ломает синтезированный `Codable` |
+| §8.8 | Контрольные кадры | Побайтная проверка формата |
