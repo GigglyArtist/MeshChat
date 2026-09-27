@@ -5,7 +5,7 @@ import Foundation
 
 // MARK: - QR payload codec (§6.4)
 
-private struct QRPayload: Codable {
+nonisolated private struct QRPayload: Codable {
     let app: String
     let v: Int
     let svc: String
@@ -16,7 +16,7 @@ extension RoomInvite {
 
     /// Кодирует приглашение в детерминированный JSON-строку для QR-кода.
     /// Ключи отсортированы; data — base64; UTF-8.
-    func qrPayload() throws -> String {
+    nonisolated func qrPayload() throws -> String {
         let payload = QRPayload(app: "meshchat", v: version, svc: serviceName, key: roomKey)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -29,7 +29,7 @@ extension RoomInvite {
     }
 
     /// Разбирает QR-строку и возвращает приглашение, либо бросает `InviteError`.
-    static func parse(qrPayload: String) throws -> RoomInvite {
+    nonisolated static func parse(qrPayload: String) throws -> RoomInvite {
         guard let data = qrPayload.data(using: .utf8) else {
             throw InviteError.notMeshChatCode
         }

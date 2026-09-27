@@ -4,7 +4,7 @@
 import Foundation
 
 /// Содержимое QR-приглашения в комнату (§6.3). Codable добавляется в расширении (шаг 6).
-struct RoomInvite: Sendable {
+nonisolated struct RoomInvite: Sendable {
     static let currentVersion = 1
 
     /// Версия протокола QR-формата.
