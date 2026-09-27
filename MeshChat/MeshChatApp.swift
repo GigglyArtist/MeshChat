@@ -5,9 +5,16 @@ import SwiftUI
 
 @main
 struct MeshChatApp: App {
+    @State private var startup = AppStartup.live()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            switch startup {
+            case .ready(let environment):
+                RootView(environment: environment)
+            case .failed(let message):
+                StartupErrorView(message: message)
+            }
         }
     }
 }
