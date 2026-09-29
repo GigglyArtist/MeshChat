@@ -9,19 +9,19 @@ import Foundation
 protocol PeerConnection: AnyObject, Sendable {
 
     /// Локальный ID соединения. **Не** является PermanentPeerID собеседника.
-    var connectionID: UUID { get }
+    nonisolated var connectionID: UUID { get }
 
     /// Поток событий: состояние, viability, пакеты, нарушения протокола.
     /// Завершается после события `.state(.failed)` или `.state(.cancelled)`.
-    var events: AsyncStream<ConnectionEvent> { get }
+    nonisolated var events: AsyncStream<ConnectionEvent> { get }
 
     /// Запускает соединение. Вызывается один раз; повторный вызов не имеет эффекта.
-    func start()
+    nonisolated func start()
 
     /// Отправляет пакет. Завершается, когда данные переданы сетевому стеку (`.contentProcessed`).
     /// Бросает `NetworkError.sendFailed` при ошибке отправки.
-    func send(_ packet: Packet) async throws
+    nonisolated func send(_ packet: Packet) async throws
 
     /// Закрывает соединение. Идемпотентен.
-    func cancel()
+    nonisolated func cancel()
 }

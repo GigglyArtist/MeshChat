@@ -9,10 +9,10 @@ protocol HostListening: AnyObject, Sendable {
     /// Публикует `<serviceName>.<serviceType>` и возвращает поток событий listener'а.
     ///
     /// - Throws: `NetworkError.listenerFailed` при повторном вызове у работающего listener'а.
-    func start(serviceName: String, security: ChannelSecurity) throws -> AsyncStream<ListenerEvent>
+    nonisolated func start(serviceName: String, security: ChannelSecurity) throws -> AsyncStream<ListenerEvent>
 
     /// Останавливает listener. Завершает поток событий. Идемпотентен.
     ///
     /// После `stop()` можно снова вызвать `start()` с тем же `serviceName` (ADR-11).
-    func stop()
+    nonisolated func stop()
 }
