@@ -35,11 +35,11 @@ final class LoopbackHarness: @unchecked Sendable {
     // MARK: - Запуск
 
     /// Поднимает listener и ждёт события `.ready(port:)`.
-    static func start(serviceName: String? = nil) async throws -> LoopbackHarness {
+    static func start(serviceName: String? = nil, security: ChannelSecurity = .plaintext) async throws -> LoopbackHarness {
         let name = serviceName ?? "LoopbackTest-\(UUID().uuidString.prefix(8))"
         let config = NetworkConfiguration.standard
         let listener = BonjourHostListener(configuration: config)
-        let stream = try listener.start(serviceName: name, security: .plaintext)
+        let stream = try listener.start(serviceName: name, security: security)
         let probe = EventProbe<ListenerEvent>(stream: stream)
 
         let readyEvent = try await probe.waitFor(timeout: .seconds(5)) { event in
