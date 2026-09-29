@@ -5,16 +5,17 @@ import Foundation
 import Network
 import os
 
-// Logger для TLS-конфигурации; используется только в этом файле.
-// Инициализируется один раз и не изменяется — безопасно без nonisolated(unsafe).
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "meshchat", category: "network")
-
 extension NWProtocolTLS.Options {
+    // Logger — Sendable struct; nonisolated static let безопасен без nonisolated(unsafe).
+    private nonisolated static let tlsLogger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "meshchat",
+        category: "network"
+    )
     /// TLS с общим ключом по образцу Apple sample «Building a custom peer-to-peer protocol» (§7.4).
     ///
     /// Identity — строка `"meshchat"` в формате `DispatchData`.
     /// Шифронабор — `TLS_PSK_WITH_AES_128_GCM_SHA256`.
-    static func meshChatPSK(_ psk: Data) -> NWProtocolTLS.Options {
+    nonisolated static func meshChatPSK(_ psk: Data) -> NWProtocolTLS.Options {
         let options = NWProtocolTLS.Options()
 
         let key = psk.withUnsafeBytes { DispatchData(bytes: $0) }
@@ -32,7 +33,7 @@ extension NWProtocolTLS.Options {
             sec_protocol_options_append_tls_ciphersuite(options.securityProtocolOptions, suite)
         } else {
             // Шифронабор недоступен — TLS не согласуется: должен поймать тест.
-            logger.fault("PSK cipher suite TLS_PSK_WITH_AES_128_GCM_SHA256 unavailable on this platform")
+            NWProtocolTLS.Options.tlsLogger.fault("PSK cipher suite TLS_PSK_WITH_AES_128_GCM_SHA256 unavailable on this platform")
         }
 
         return options

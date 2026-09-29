@@ -6,7 +6,7 @@ import Network
 
 extension NWParameters {
     /// TCP-параметры MeshChat: noDelay, keepalive, peer-to-peer Wi-Fi и опциональный TLS-PSK (§7.4).
-    static func meshChat(security: ChannelSecurity) -> NWParameters {
+    nonisolated static func meshChat(security: ChannelSecurity) -> NWParameters {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         tcp.enableKeepalive = true
