@@ -63,6 +63,7 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
 - Сборка и тесты — через инструменты Xcode (`BuildProject`, `RunAllTests` и т. п.), если они тебе доступны; иначе через `xcodebuild`. В отчёте укажи, чем пользовался.
 - Для `xcodebuild` бери любой iPhone из `xcrun simctl list devices available` или `-destination 'generic/platform=iOS Simulator'` для сборки без запуска.
 - Проверки настроек (`xcodebuild -showBuildSettings`) симулятор не требуют — их выполняй всегда, когда промпт просит.
+- **Фантомные ошибки Xcode.** Если инструменты Xcode или редактор пишут `Cannot find 'X' in scope`, а `xcodebuild` собирает успешно, — это устаревший индекс Xcode. Не переписывай и не переноси код ради него. Напиши об этом в отчёте: лечится через Product → Clean Build Folder (⇧⌘K).
 
 ```bash
 xcodebuild -scheme MeshChat -destination 'generic/platform=iOS Simulator' -derivedDataPath DerivedData build
@@ -92,5 +93,6 @@ xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=<iPhone и
 2. **Файлы** — созданные, изменённые, удалённые, перемещённые.
 3. **Коммиты** — `git log --oneline --decorate` новых коммитов. Сверь с планом коммитов из промпта: если какие-то объединены, разделены или пропущены — перечисли и объясни.
 4. **Тег** — вывод `git tag --points-at HEAD`.
-5. **Тесты** — сколько всего, сколько новых, все ли зелёные.
+5. **Тесты** — **дословно** итоговая строка Swift Testing из вывода `xcodebuild test` (`Test run with N tests in M suites passed after …`) и `** TEST SUCCEEDED **`. Ничего не оценивай и не пересчитывай вручную: параметризованный тест считается по числу аргументов.
 6. **Отклонения и вопросы** — всё, что сделано не так, как написано в промпте, включая пути к файлам.
+7. **Рабочая копия** — вывод `git status --short` в конце задачи. Он должен быть пустым; если нет — объясни каждую строку.

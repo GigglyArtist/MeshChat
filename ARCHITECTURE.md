@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.4 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.5 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -588,15 +588,24 @@ enum ChannelSecurity: Sendable {
     #endif
 }
 
+/// Причина проблемы канала — единая для соединений и listener'а.
+enum NetworkIssue: Sendable, Equatable {
+    case localNetworkDenied          // NWError.dns(kDNSServiceErr_PolicyDenied): нет разрешения «Локальная сеть»
+    case tlsFailure(Int32)           // NWError.tls(OSStatus): например, не совпал общий ключ
+    case other(String)
+}
+
 enum ConnectionState: Sendable, Equatable {
-    case preparing, ready, waiting(String), failed(String), cancelled
+    case preparing, ready, waiting(NetworkIssue), failed(NetworkIssue), cancelled
 }
 
 enum ConnectionEvent: Sendable {
     case state(ConnectionState)
     case viability(Bool)
     case packet(Packet)
-    case protocolViolation(PacketCodecError)   // после него соединение закрывается
+    /// Битый кадр, битый JSON, чужая версия — соединение закрывается само сразу после события.
+    /// `unknownType` — соединение НЕ закрывается: решает сессия (до хэндшейка — cancel, после — игнор, §8.4).
+    case protocolViolation(PacketCodecError)
 }
 
 /// Одна двунаправленная связь с удалённой стороной. Ничего не знает о чате.
@@ -613,8 +622,11 @@ protocol PeerConnection: AnyObject, Sendable {
 }
 
 enum ListenerEvent: Sendable {
-    case ready
-    case failed(String)
+    /// Listener принимает соединения; port — фактический TCP-порт (для логов и тестов через 127.0.0.1).
+    case ready(port: UInt16)
+    /// Listener остановлен из-за ошибки; `.waiting(localNetworkDenied)` тоже считается отказом.
+    case failed(NetworkIssue)
+    /// Новое входящее соединение, ещё не запущенное: start() вызывает сессия.
     case incoming(any PeerConnection)
 }
 
@@ -652,14 +664,40 @@ extension NWParameters {
         return parameters
     }
 }
-// NWProtocolTLS.Options.meshChatPSK(_:) — по образцу Apple sample
-// «Building a custom peer-to-peer protocol»: sec_protocol_options_add_pre_shared_key
-// + PSK-шифронабор. Реализуется на этапе 9 дорожной карты.
+
+extension NWProtocolTLS.Options {
+    /// TLS с общим ключом (по образцу Apple sample «Building a custom peer-to-peer protocol»).
+    static func meshChatPSK(_ psk: Data) -> NWProtocolTLS.Options {
+        let options = NWProtocolTLS.Options()
+        let key = psk.withUnsafeBytes { DispatchData(bytes: $0) }
+        let identity = Data("meshchat".utf8).withUnsafeBytes { DispatchData(bytes: $0) }
+        sec_protocol_options_add_pre_shared_key(options.securityProtocolOptions,
+                                                key as __DispatchData, identity as __DispatchData)
+        if let suite = tls_ciphersuite_t(rawValue: TLS_PSK_WITH_AES_128_GCM_SHA256) {   // при необходимости UInt16(...)
+            sec_protocol_options_append_tls_ciphersuite(options.securityProtocolOptions, suite)
+        } else {
+            logger.fault("PSK cipher suite unavailable")   // не молчим: без него TLS не согласуется, это поймает тест
+        }
+        return options
+    }
+}
 ```
+
+**Особенность TLS-PSK с Bonjour** (подтверждено Apple DTS на форумах): если ключи не совпали, соединение к `.service(...)` может **зависнуть без смены состояния**, а к `.hostPort(...)` — перейти в `.waiting` с TLS-ошибкой. Наш `connectTimeout` (15 с) закрывает первый случай: клиент получает `ended(.hostUnreachable)`. Тесты шифрования работают через `127.0.0.1` (`.hostPort`), где результат детерминирован.
+
+**Устройство `NWPeerConnection`:**
+
+- Два инициализатора: `init(connection: NWConnection)` — для входящих от listener'а, и `convenience init(endpoint: NWEndpoint, parameters: NWParameters)` — для исходящих. Это обычное внедрение зависимости, а не тестовый хук: коннектор передаёт `.service(...)`, тест — `.hostPort(127.0.0.1, port)`.
+- Все колбэки `NWConnection` идут на **одну** приватную последовательную очередь. Изменяемое состояние (`FrameAssembler`, флаг завершения) трогается только на ней. Поэтому класс — `nonisolated final class … @unchecked Sendable`, с комментарием об этом инварианте.
+- Чтение начинается на `.ready`: цикл `receive(minimumIncompleteLength: 1, maximumLength: 65_536)` → `FrameAssembler.append` → `PacketCodec.decodePayload` → `yield(.packet)`. Если пришёл `isComplete` (собеседник закрыл поток) → `cancel()`.
+- `.failed` и `.cancelled` → `yield(.state(...))`, затем `continuation.finish()` — ровно один раз.
+- `continuation.onTermination` → `connection.cancel()`: если потребитель перестал читать события, соединение не остаётся висеть.
+- `send` — `withCheckedThrowingContinuation` вокруг `send(content:completion: .contentProcessed)`. Ошибка → `NetworkError.sendFailed`. Продолжение возобновляется ровно один раз.
 
 - **Хост:** `NWListener(using: .meshChat(...))`, `listener.service = NWListener.Service(name: serviceName, type: "_meshchat._tcp")`.
 - **Клиент:** `NWConnection(to: .service(name: invite.serviceName, type: "_meshchat._tcp", domain: "local.", interface: nil), using: .meshChat(...))`.
 - Все колбэки `NWConnection`/`NWListener` выполняются на приватной последовательной `DispatchQueue` обёртки и переводятся в `AsyncStream.Continuation.yield`.
+- Повторный `start` у работающего listener'а — ошибка `NetworkError.listenerFailed`. Перезапуск (ADR-11) — `stop()`, затем `start()` с тем же `serviceName`.
 
 ### 7.5. Алгоритм хоста
 
@@ -731,6 +769,8 @@ start():
 
   ```swift
   struct FrameAssembler: Sendable {
+      /// Максимальная длина JSON-тела кадра в байтах. Константа кадрирования; её же использует PacketCodec.
+      static let maxFrameLength = 65_536
       /// Добавляет кусок потока и возвращает все кадры, которые стали целыми (только JSON, без префикса).
       /// Бросает `invalidFrameLength`, как только прочитан недопустимый заголовок; после ошибки не используется.
       mutating func append(_ chunk: Data) throws -> [Data]
@@ -885,7 +925,7 @@ enum Packet: Sendable, Equatable {
 
 struct PacketCodec: Sendable {
     static let protocolVersion = 1
-    static let maxFrameLength = 65_536
+    /// Проверяет длину по FrameAssembler.maxFrameLength (§8.1).
     func encodeFrame(_ packet: Packet) throws -> Data      // конверт + префикс длины
     func decodePayload(_ json: Data) throws -> Packet      // без префикса
 }
@@ -1578,8 +1618,9 @@ Scopes: `config`, `storage`, `security`, `network`, `protocol`, `session`, `app`
 2. Коммит делается **только** после зелёной сборки и зелёных тестов.
 3. Перед коммитом — `git status` и `git diff --staged`: в коммите только файлы задачи, без `xcuserdata`, `DerivedData`, `.DS_Store`.
 4. Никаких `git push --force`, `rebase` опубликованной истории и `commit --amend` уже запушенных коммитов. Пушит автор проекта.
-5. После завершения этапа дорожной карты — тег `v0.<номер этапа>`; исправления после этапа — `v0.<этап>.<N>`.
-6. Ошибка, найденная в уже закоммиченном коде, исправляется **отдельным** коммитом `fix(<scope>): …`, даже если нашлась при написании тестов. Смешивать исправление с `test(...)` нельзя: по истории должно быть видно, что и когда чинили.
+5. Правила одинаковы для коммитов агента и **автора проекта**: свои правки тоже оформляются как `fix(protocol): …`, `refactor(ui): …` и т. п.
+6. После завершения этапа дорожной карты — тег `v0.<номер этапа>`; исправления после этапа — `v0.<этап>.<N>`.
+7. Ошибка, найденная в уже закоммиченном коде, исправляется **отдельным** коммитом `fix(<scope>): …`, даже если нашлась при написании тестов. Смешивать исправление с `test(...)` нельзя: по истории должно быть видно, что и когда чинили.
 
 Примеры:
 
@@ -1603,11 +1644,11 @@ docs(architecture): describe TLS-PSK channel security
 | 2 | Identity + онбординг | Keychain, `PermanentPeerID`, ввод ника, `AppEnvironment`, `RootView` | §6.1–6.2, §12, §13 |
 | 3 | Секрет комнаты + QR | `RoomCredentials`, `RoomInvite`, генерация и сканирование QR, экраны создания и входа (пока без сети) | §6.3–6.4, §12 |
 | 4 | Протокол | `Packet`, `PacketCodec`, `FrameAssembler`, тесты | §8 |
-| 5 | Транспорт | `NWPeerConnection`, `BonjourHostListener`, `BonjourClientConnector` (DEBUG без TLS) | §7.1–7.4 |
+| 5 | Транспорт | `NWPeerConnection`, `BonjourHostListener`, `BonjourClientConnector`, TLS-PSK; тесты через 127.0.0.1 | §7.1–7.4 |
 | 6 | Хэндшейк и сессии | `HostSession`, `ClientSession`, лимит 4, `ActiveRoom` + привязка к истории | §7.5–7.6, §11 |
 | 7 | Чат | Ретрансляция, `ChatView`, отправка/приём | §7.7, §12 |
 | 8 | Надёжность | Heartbeat, грейс-период 20 с, реконнект, потеря хоста/клиента, `scenePhase` | §9, ADR-11 |
-| 9 | Шифрование канала | TLS-PSK, проверка на двух устройствах | ADR-03, §7.4 |
+| 9 | Проверка шифрования | TLS-PSK на двух устройствах; по желанию — снимок трафика, в котором не видно ID и ников | ADR-03, §15.1 |
 | 10 | История | Экраны истории, удаление сессий | §10.4, §12 |
 | 11 | Финиш | Обработка ошибок в UI, README со скриншотами, ручные тесты §16.2, тег `v1.0` | §14–16 |
 
@@ -1652,3 +1693,13 @@ docs(architecture): describe TLS-PSK channel security
 | §8.2 | Детерминированный JSON; даты — целые миллисекунды `Int64`; `nil` не пишется; `leave` с `{}`; кодек проверяет только структуру | Контрольные кадры и точное совпадение дат после пересылки |
 | §8.6 | `PacketType`, `nonisolated`-DTO, перевод DTO ↔ Domain, порядок ошибок декодирования | Изоляция `MainActor` по умолчанию ломает синтезированный `Codable` |
 | §8.8 | Контрольные кадры | Побайтная проверка формата |
+
+### v1.5 — перед задачей 05
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| §8.1, §8.6 | `maxFrameLength` перенесён в `FrameAssembler` | Решение автора: предел длины — свойство кадрирования. Кодек проверяет его при сборке кадра |
+| §7.3 | `ListenerEvent.ready(port:)`; единый `NetworkIssue` для состояний соединения и listener'а; `unknownType` не закрывает соединение | Тесты через 127.0.0.1; отдельная обработка запрета локальной сети; правило §8.4 решает сессия |
+| §7.4 | TLS-PSK реализуется в этапе 5; зависание PSK + Bonjour при несовпадении ключей; устройство `NWPeerConnection` | Шифрование проверяется тестами сразу, а не на этапе 9 |
+| §17.4 | Conventional Commits обязательны и для коммитов автора | Коммит `PacketCodec mistake fixed` выбился из истории |
+| §18 | Этап 9 — проверка шифрования на устройствах | TLS перенесён в этап 5 |
