@@ -15,4 +15,6 @@ nonisolated enum NetworkError: Error, Sendable, Equatable {
     case sendFailed(String)
     /// Нарушение протокола (битый кадр, версия и т. д.).
     case protocolViolation(String)
+    /// Текст сообщения не прошёл проверку `MessageTextPolicy`.
+    case invalidMessage
 }
