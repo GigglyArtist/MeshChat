@@ -36,7 +36,8 @@ extension LocalIdentity {
 /// Отправляет `clientHello` от имени `identity` и ждёт `hostWelcome`.
 ///
 /// Используется в тестах `HostSession`: клиентский конец пары передаётся сюда,
-/// пока `HostSession` держит серверный конец.
+/// пока `HostSession` держит серверный конец. Возвращает зонд, чтобы тест мог
+/// продолжать читать события с этого соединения после хэндшейка.
 ///
 /// - Throws: `EventProbeError.timeout` если `hostWelcome` не пришёл за 2 с.
 @discardableResult
@@ -45,7 +46,7 @@ func playClient(
     identity: LocalIdentity,
     secret: any RoomSecret,
     timeout: Duration = .seconds(2)
-) async throws -> HostWelcome {
+) async throws -> (welcome: HostWelcome, probe: EventProbe<ConnectionEvent>) {
     let probe = EventProbe<ConnectionEvent>(stream: connection.events)
     let hello = ClientHello(
         protocolVersion: PacketCodec.protocolVersion,
@@ -61,7 +62,7 @@ func playClient(
     guard case .packet(.hostWelcome(let welcome)) = event else {
         throw EventProbeError.timeout(received: [])
     }
-    return welcome
+    return (welcome, probe)
 }
 
 // MARK: - Быстрый самотест

@@ -196,16 +196,24 @@ actor HostSession: HostSessionManaging {
         return await withTaskGroup(of: ClientHello?.self) { group in
             group.addTask {
                 var readyReceived = false
+                var bufferedHello: ClientHello? = nil
                 for await event in conn.events {
                     switch event {
                     case .state(.ready):
                         readyReceived = true
+                        // clientHello мог прийти раньше .ready — возвращаем его.
+                        if let h = bufferedHello { return h }
                     case .state(.cancelled), .state(.failed):
                         return nil
                     case .packet(let pkt):
-                        guard readyReceived else { return nil }
-                        if case .clientHello(let h) = pkt { return h }
-                        return nil
+                        if case .clientHello(let h) = pkt {
+                            if readyReceived { return h }
+                            // В фейке пакет может прийти до .ready — буферизуем.
+                            bufferedHello = h
+                        } else {
+                            // Любой другой пакет до хэндшейка — нарушение протокола.
+                            return nil
+                        }
                     case .protocolViolation:
                         return nil
                     default:

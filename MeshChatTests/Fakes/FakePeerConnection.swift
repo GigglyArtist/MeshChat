@@ -20,7 +20,7 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
     private let startReady: Bool
 
     /// Все пакеты, отправленные через `send(_:)`.
-    var sentPackets: [Packet] { lock.withLock { _sentPackets } }
+    nonisolated var sentPackets: [Packet] { lock.withLock { _sentPackets } }
 
     // MARK: - Фабрика пар
 
@@ -30,7 +30,6 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
     static func makePair(startReady: Bool = true) -> (FakePeerConnection, FakePeerConnection) {
         let a = FakePeerConnection(startReady: startReady)
         let b = FakePeerConnection(startReady: startReady)
-        // Устанавливаем пиров после создания обоих объектов.
         a.lock.withLock { a._peer = b }
         b.lock.withLock { b._peer = a }
         return (a, b)
@@ -40,7 +39,6 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
         self.connectionID = UUID()
         self.startReady = startReady
         var cont: AsyncStream<ConnectionEvent>.Continuation!
-        // Continuation живёт в замыкании; ссылка сохраняется в свойстве.
         self.events = AsyncStream { cont = $0 }
         self.continuation = cont
     }
@@ -58,28 +56,36 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
 
     nonisolated func cancel() {
         emit(.state(.cancelled))
-        lock.withLock { continuation?.finish(); continuation = nil }
-        peer?.emit(.state(.cancelled))
-        peer?.lock.withLock { $0.continuation?.finish(); $0.continuation = nil }
+        closeStream()
+        let p = peer
+        p?.emit(.state(.cancelled))
+        p?.closeStream()
     }
 
     // MARK: - Вспомогательные методы для тестов
 
     /// Отправляет произвольное событие в поток этого конца.
-    func emit(_ event: ConnectionEvent) {
-        lock.withLock { continuation?.yield(event) }
+    nonisolated func emit(_ event: ConnectionEvent) {
+        lock.withLock { _ = continuation?.yield(event) }
     }
 
     /// Имитирует переход в `.ready` (используется при `startReady: false`).
-    func emitReady() { emit(.state(.ready)) }
+    nonisolated func emitReady() { emit(.state(.ready)) }
 
-    /// Имитирует разрыв: `.failed` + завершение потока.
-    func emitFailure(_ issue: NetworkIssue = .other("fake failure")) {
+    /// Имитирует разрыв: `.failed` + завершение обоих потоков.
+    nonisolated func emitFailure(_ issue: NetworkIssue = .other("fake failure")) {
         emit(.state(.failed(issue)))
-        lock.withLock { continuation?.finish(); continuation = nil }
-        peer?.emit(.state(.cancelled))
-        peer?.lock.withLock { $0.continuation?.finish(); $0.continuation = nil }
+        closeStream()
+        let p = peer
+        p?.emit(.state(.cancelled))
+        p?.closeStream()
     }
 
-    private var peer: FakePeerConnection? { lock.withLock { _peer } }
+    // MARK: - Приватные хелперы
+
+    nonisolated private func closeStream() {
+        lock.withLock { continuation?.finish(); continuation = nil }
+    }
+
+    nonisolated private var peer: FakePeerConnection? { lock.withLock { _peer } }
 }
