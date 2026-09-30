@@ -255,9 +255,9 @@ struct ClientSessionTests {
         let sent = try await session.send(text: "hello")
         #expect(sent.text == "hello")
 
-        // Ждём, пока send завершится и пакет окажется в sentPackets клиентского конца.
+        // FakePeerConnection.send добавляет пакет в sentPackets синхронно до возврата,
+        // поэтому пакет гарантированно доступен сразу после await session.send.
         let clientConn = connector.clientConnections.first!
-        try await Task.sleep(for: .milliseconds(50))
         let hasChatMsg = clientConn.sentPackets.contains {
             if case .chatMessage(let m) = $0 { return m.messageID == sent.id }; return false
         }

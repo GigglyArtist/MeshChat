@@ -19,15 +19,19 @@ struct HostSessionTests {
         try! RoomCredentials(roomKeyData: Data(repeating: 0xAB, count: 32))
     }
 
+    /// По умолчанию используется `.loopback` (секундные таймауты), чтобы тесты успеха
+    /// не зависели от задержек `@MainActor` под нагрузкой (§16.3).
+    /// Тест, проверяющий сам таймаут хэндшейка, передаёт `.test` явно.
     func makeSession(
         identity: LocalIdentity = .makeTest(),
         secret: (any RoomSecret)? = nil,
-        listener: FakeHostListener? = nil
+        listener: FakeHostListener? = nil,
+        configuration: NetworkConfiguration = .loopback
     ) -> (HostSession, FakeHostListener) {
         let s = secret ?? makeSecret()
         let l = listener ?? FakeHostListener()
         let session = HostSession(identity: identity, secret: s, listener: l,
-                                  configuration: .test)
+                                  configuration: configuration)
         return (session, l)
     }
 
@@ -102,7 +106,7 @@ struct HostSessionTests {
 
     @Test("handshake timeout: connection cancelled, session stays active")
     func handshakeTimeout() async throws {
-        let (session, listener) = makeSession()
+        let (session, listener) = makeSession(configuration: .test)
         let sessionProbe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitReady()
@@ -114,11 +118,14 @@ struct HostSessionTests {
         let (clientConn, serverConn) = FakePeerConnection.makePair()
         listener.accept(serverConn)
 
-        // Ждём дольше handshakeTimeout (300 мс) — сессия не должна упасть.
-        try await Task.sleep(for: .milliseconds(600))
+        // Ждём отмены клиентского конца (сигнал того, что хост отменил serverConn).
+        // handshakeTimeout = 300 мс в .test — хост вызывает conn.cancel() по таймауту.
+        let clientProbe = EventProbe<ConnectionEvent>(stream: clientConn.events)
+        _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+            if case .state(.cancelled) = $0 { return true }; return false
+        }
         // Хост ничего не должен был отправить (хэндшейк не прошёл).
         #expect(serverConn.sentPackets.isEmpty)
-        _ = clientConn
     }
 
     // MARK: 6. Неверный authToken → соединение отменяется
@@ -390,7 +397,7 @@ struct HostSessionTests {
             return false
         }
 
-        try await Task.sleep(for: .milliseconds(100))
+        // relay() исключает отправителя на уровне кода — echo невозможен без sleep.
         let aEcho = probeA.events.filter {
             if case .packet(.chatMessage(let m)) = $0 { return m.messageID == msgID }; return false
         }
