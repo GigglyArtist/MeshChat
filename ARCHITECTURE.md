@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.5 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.6 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -383,6 +383,25 @@ enum SessionEvent: Sendable, Equatable {
 }
 ```
 
+### 5.2. Правила текста сообщения и времени
+
+```swift
+// Domain/Models/MessageTextPolicy.swift
+enum MessageTextPolicy {
+    static let maxLength = 4_000
+    /// Обрезает пробелы и переводы строк по краям; nil, если пусто или длиннее maxLength символов.
+    static func normalize(_ raw: String) -> String?
+}
+
+// Domain/Models/Date+Milliseconds.swift
+extension Date {
+    /// Время, округлённое вниз до целых миллисекунд (так дата передаётся по сети без потерь, §8.2).
+    var flooredToMilliseconds: Date { get }
+}
+```
+
+Новое сообщение создаёт сессия: `ChatMessage(id: UUID(), text: normalized, timestamp: now().flooredToMilliseconds, senderID: myID)`. Входящий `chatMessage` с текстом, который `normalize` отвергает, отбрасывается (§8.4).
+
 > `AsyncStream` рассчитан на **одного** потребителя. Каждый поток событий в проекте читает ровно один объект (сессию читает `ActiveRoom`, `ActiveRoom` читает ViewModel).
 
 ---
@@ -573,10 +592,11 @@ protocol ChatSessionManaging: AnyObject, Sendable {
 protocol HostSessionManaging: ChatSessionManaging {
     var sessionID: UUID { get }
     var invite: RoomInvite { get }
-    /// Вызывается при возврате приложения в `.active`: перезапускает listener, если он упал (ADR-11).
-    func resumeAfterForeground() async
+    // Этап 8: func resumeAfterForeground() async — перезапуск listener'а после возврата в .active (ADR-11).
 }
 ```
+
+**Изоляция.** В проекте изоляция по умолчанию — `MainActor`, поэтому протокол, объявленный вне Presentation/App, без пометок получил бы требования, изолированные на главном акторе, и акторы-сессии не смогли бы их реализовать. Правило для **всех** протоколов в Domain, Network, Security, Storage и Application: `nonisolated` на каждом требовании (так сделано в задаче 05). Акторы реализуют синхронные свойства (`role`, `events`, `sessionID`, `invite`) через `nonisolated let`.
 
 ### 7.3. Внутренние протоколы (Network) — для подмены фейками в тестах
 
@@ -743,6 +763,10 @@ start():
   цикл приёма + heartbeat (§9)
 ```
 
+**Упрощение этапа 6** (до этапа 8, §9): потеря соединения обрабатывается **сразу**, без грейс-периода. У хоста это `participantLeft(connectionLost)`, у клиента — `ended(.hostLost)`. Heartbeat, 20-секундное окно и переподключение добавляются на этапе 8 поверх этой же логики.
+
+**Реентерабельность акторов.** Во время любого `await` внутри актора (например, `connection.send`) актор может обработать другие вызовы. Поэтому после каждого `await` состояние перепроверяется: участник мог уйти, сессия могла завершиться. Нельзя держать ссылку на «текущего участника» через `await` и считать её актуальной.
+
 ### 7.7. Правила ретрансляции (хост)
 
 1. От клиента принимается `chatMessage`, только если `senderID` совпадает с `PermanentPeerID`, авторизованным на **этом** соединении. Иначе — нарушение протокола, соединение закрывается.
@@ -750,6 +774,40 @@ start():
 3. Своё сообщение хост рассылает всем активным клиентам.
 4. Клиентам в грейс-периоде ничего не отправляется (в v1 без буферизации — §15.2).
 5. Порядок сообщений в комнате = порядок их обработки актором хоста.
+6. Ошибка отправки одному клиенту не прерывает рассылку остальным: пишется в лог, а судьбу этого клиента решают события его соединения.
+
+### 7.8. Сборка сессий и тестовая сеть
+
+```swift
+actor HostSession: HostSessionManaging {
+    init(identity: LocalIdentity, secret: any RoomSecret, listener: any HostListening,
+         configuration: NetworkConfiguration = .standard,
+         now: @escaping @Sendable () -> Date = { Date() })
+}
+actor ClientSession: ChatSessionManaging {
+    init(identity: LocalIdentity, invite: RoomInvite, secret: any RoomSecret,
+         connector: any ClientConnecting,
+         configuration: NetworkConfiguration = .standard,
+         now: @escaping @Sendable () -> Date = { Date() })
+}
+struct MeshNetworkService: MeshNetworking {
+    init(configuration: NetworkConfiguration = .standard)   // создаёт BonjourHostListener / BonjourClientConnector
+}
+```
+
+- Безопасность канала сессии выбирают сами: всегда `.tlsPSK(secret.tlsPreSharedKey)`.
+- `serviceName` (`UUID().uuidString`) и `invite` генерирует `HostSession` в `init`.
+- Все таймауты берутся из `NetworkConfiguration`; в тестах — десятки/сотни миллисекунд. Текущее время — только через `now()`.
+
+**Тестовая сеть** (`MeshChatTests/Fakes/`) — сессии проверяются без сокетов:
+
+| Фейк | Поведение |
+|---|---|
+| `FakePeerConnection` | `makePair()` → два связанных конца: `send` на одном даёт `.packet` на другом. `start()` → `.state(.ready)` (можно отложить или запретить). `cancel()` → `.cancelled` у себя и у второго конца, оба потока завершаются. Методы для тестов: `emit(_ event:)`, записанный список отправленных пакетов |
+| `FakeHostListener` | `start` отдаёт поток; тест вызывает `accept(_:)` → `.incoming`, `emitReady(port:)`, `emitFailure(_:)`; фиксирует `serviceName`, `security`, вызовы `stop()` |
+| `FakeClientConnector` | На `makeConnection` создаёт пару: клиентский конец возвращает, серверный передаёт в связанный `FakeHostListener` (или тесту). Может выдать соединение, которое никогда не станет `.ready` |
+
+Сквозная проверка — один тест поверх настоящего TLS через `127.0.0.1`: `HostSession` с `BonjourHostListener` в тестовой обёртке `ListenerTap` (реализует `HostListening`, пересылает события и отдаёт тесту порт из `.ready`) и `ClientSession` с тестовым коннектором к `127.0.0.1:port`. Никаких изменений production-кода ради теста не требуется: всё подставляется через протоколы.
 
 ---
 
@@ -1470,6 +1528,7 @@ enum NetworkError: Error, Sendable, Equatable {
     case notActive
     case sendFailed(String)
     case protocolViolation(String)
+    case invalidMessage          // текст не прошёл MessageTextPolicy
 }
 // StorageError — §10.3, PacketCodecError — §8.6
 ```
@@ -1564,6 +1623,7 @@ enum NetworkError: Error, Sendable, Equatable {
   | `static let` `Sendable`-типа (`Data`, `String`, `UUID`, `Int`) | Обычный `static let` (в `nonisolated`-типе) или `nonisolated static let`. `nonisolated(unsafe)` здесь лишний, и компилятор выдаёт предупреждение |
   | Obj-C-глобалы вроде `NSMergeByPropertyObjectTrumpMergePolicy` | Swift-API: `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)` |
   | `fetchRequest()` в расширениях сущностей | Не используется; запросы строятся в `CoreDataStorageManager` через `NSFetchRequest<T>(entityName: T.entityName)` |
+  | Протокол вне Presentation/App | `nonisolated` на каждом требовании; у актора синхронные свойства — `nonisolated let` (§7.2) |
 
 - `nonisolated(unsafe)` и `@unchecked Sendable` — только с комментарием, объясняющим безопасность.
 
@@ -1645,8 +1705,8 @@ docs(architecture): describe TLS-PSK channel security
 | 3 | Секрет комнаты + QR | `RoomCredentials`, `RoomInvite`, генерация и сканирование QR, экраны создания и входа (пока без сети) | §6.3–6.4, §12 |
 | 4 | Протокол | `Packet`, `PacketCodec`, `FrameAssembler`, тесты | §8 |
 | 5 | Транспорт | `NWPeerConnection`, `BonjourHostListener`, `BonjourClientConnector`, TLS-PSK; тесты через 127.0.0.1 | §7.1–7.4 |
-| 6 | Хэндшейк и сессии | `HostSession`, `ClientSession`, лимит 4, `ActiveRoom` + привязка к истории | §7.5–7.6, §11 |
-| 7 | Чат | Ретрансляция, `ChatView`, отправка/приём | §7.7, §12 |
+| 6 | Сетевые сессии | `HostSession`, `ClientSession`: хэндшейк, лимит 4, участники, ретрансляция сообщений, выход; тестовая сеть; `MeshNetworkService` | §7.2, §7.5–7.8 |
+| 7 | Комната и чат | `ActiveRoom`, `RoomService`, привязка к истории, `ChatView`; первый чат между двумя телефонами | §11, §12 |
 | 8 | Надёжность | Heartbeat, грейс-период 20 с, реконнект, потеря хоста/клиента, `scenePhase` | §9, ADR-11 |
 | 9 | Проверка шифрования | TLS-PSK на двух устройствах; по желанию — снимок трафика, в котором не видно ID и ников | ADR-03, §15.1 |
 | 10 | История | Экраны истории, удаление сессий | §10.4, §12 |
@@ -1703,3 +1763,14 @@ docs(architecture): describe TLS-PSK channel security
 | §7.4 | TLS-PSK реализуется в этапе 5; зависание PSK + Bonjour при несовпадении ключей; устройство `NWPeerConnection` | Шифрование проверяется тестами сразу, а не на этапе 9 |
 | §17.4 | Conventional Commits обязательны и для коммитов автора | Коммит `PacketCodec mistake fixed` выбился из истории |
 | §18 | Этап 9 — проверка шифрования на устройствах | TLS перенесён в этап 5 |
+
+### v1.6 — перед задачей 06
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| §7.2, §17.1 | `nonisolated`-требования у всех протоколов вне UI; `resumeAfterForeground` — на этапе 8 | В задаче 05 протоколы без пометок оказались изолированы на `MainActor` |
+| §5.2 | `MessageTextPolicy`, `Date.flooredToMilliseconds` | Одно правило текста; даты совпадают у отправителя и получателей |
+| §7.6–7.8 | Упрощение этапа 6 (потеря связи — сразу); правило реентерабельности; конструкторы сессий; тестовая сеть | Сессии проверяются без сокетов, а грейс-период добавляется отдельным этапом |
+| §14.1 | `NetworkError.invalidMessage` | Проверка текста в `send(text:)` |
+| §18 | Ретрансляция перенесена в этап 6; этап 7 — Application-слой и экран чата | Сетевую логику удобнее проверить целиком на уровне сессий |
+| §7.3 | Замечено в задаче 05: клиент без TLS к TLS-listener'у доходит до `.ready` (TCP соединился), но сервер — нет; при разном PSK через `127.0.0.1` клиент получает `.waiting(.tlsFailure)` | Фактическое поведение системы |

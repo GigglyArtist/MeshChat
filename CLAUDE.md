@@ -35,7 +35,9 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
   - Obj-C-глобалы merge policy → `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)`;
   - запросы Core Data → `NSFetchRequest<T>(entityName: T.entityName)`, без строковых литералов имён сущностей.
   - `Codable`-типы вне Presentation/App — `nonisolated struct`, иначе conformance станет изолированной на `MainActor` и неизолированный код не сможет кодировать;
-  - срезы `Data` сохраняют индексы исходника: индексируй от `startIndex`, наружу отдавай `Data(slice)`.
+  - срезы `Data` сохраняют индексы исходника: индексируй от `startIndex`, наружу отдавай `Data(slice)`;
+  - протоколы вне Presentation/App — `nonisolated` на **каждом** требовании; у актора синхронные свойства из протокола — `nonisolated let`;
+  - акторы реентерабельны: после каждого `await` перепроверяй состояние (участник мог уйти, сессия — завершиться).
 
 ## Стиль
 
@@ -93,6 +95,6 @@ xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=<iPhone и
 2. **Файлы** — созданные, изменённые, удалённые, перемещённые.
 3. **Коммиты** — `git log --oneline --decorate` новых коммитов. Сверь с планом коммитов из промпта: если какие-то объединены, разделены или пропущены — перечисли и объясни.
 4. **Тег** — вывод `git tag --points-at HEAD`.
-5. **Тесты** — **дословно** итоговая строка Swift Testing из вывода `xcodebuild test` (`Test run with N tests in M suites passed after …`) и `** TEST SUCCEEDED **`. Ничего не оценивай и не пересчитывай вручную: параметризованный тест считается по числу аргументов.
+5. **Тесты** — **дословно** итоговые строки из вывода `xcodebuild test`: `Executed N tests, with M failures …` (или `Test run with N tests …`, если она есть) и `** TEST SUCCEEDED **`. Ничего не оценивай и не пересчитывай вручную: параметризованный тест считается по числу аргументов. Если есть отключённые (`.disabled`) тесты — перечисли их с причиной.
 6. **Отклонения и вопросы** — всё, что сделано не так, как написано в промпте, включая пути к файлам.
 7. **Рабочая копия** — вывод `git status --short` в конце задачи. Он должен быть пустым; если нет — объясни каждую строку.
