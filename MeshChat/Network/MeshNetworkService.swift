@@ -8,7 +8,8 @@ import Foundation
 /// Создаёт `HostSession` и `ClientSession` с настоящими `BonjourHostListener`
 /// и `BonjourClientConnector`. Конкретизация `MeshNetworking` для production-окружения.
 ///
-/// Методы выполняются на `@MainActor` (вывод проекта): см. комментарий к `MeshNetworking`.
+/// Методы создают акторы чьи `init` выводятся как `@MainActor` (SWIFT_DEFAULT_ACTOR_ISOLATION);
+/// struct помечен `nonisolated` для явного отказа от глобальной изоляции на свойствах.
 nonisolated struct MeshNetworkService: MeshNetworking {
 
     private let configuration: NetworkConfiguration

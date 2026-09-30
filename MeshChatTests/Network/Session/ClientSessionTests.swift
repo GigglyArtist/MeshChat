@@ -27,19 +27,21 @@ struct ClientSessionTests {
 
     /// Создаёт `ClientSession` с вспомогательными фейками.
     ///
-    /// - Parameter neverReady: если `true`, соединение не эмитит `.ready` автоматически
-    ///   и тест управляет состоянием вручную.
+    /// По умолчанию используется `.loopback` (секундные таймауты), чтобы тесты успеха
+    /// не зависели от задержек `@MainActor` под нагрузкой (§16.3).
+    /// Тесты, которые проверяют сам таймаут, передают `.test` явно.
     func makeSession(
         identity: LocalIdentity = .makeTest(),
         secret: (any RoomSecret)? = nil,
-        neverReady: Bool = false
+        neverReady: Bool = false,
+        configuration: NetworkConfiguration = .loopback
     ) -> (ClientSession, FakeHostListener, FakeClientConnector) {
         let s = secret ?? makeSecret()
         let invite = makeInvite(secret: s)
         let listener = FakeHostListener()
         let connector = FakeClientConnector(listener: listener, neverReady: neverReady)
         let session = ClientSession(identity: identity, invite: invite, secret: s,
-                                    connector: connector, configuration: .test)
+                                    connector: connector, configuration: configuration)
         return (session, listener, connector)
     }
 
@@ -86,7 +88,7 @@ struct ClientSessionTests {
 
     @Test("connect timeout → ended(.hostUnreachable)")
     func connectTimeout() async throws {
-        let (session, _, _) = makeSession(neverReady: true)
+        let (session, _, _) = makeSession(neverReady: true, configuration: .test)
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
 
@@ -116,7 +118,7 @@ struct ClientSessionTests {
 
     @Test("handshake timeout → ended(.handshakeTimeout)")
     func handshakeTimeout() async throws {
-        let (session, _, connector) = makeSession()
+        let (session, _, connector) = makeSession(configuration: .test)
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
 
