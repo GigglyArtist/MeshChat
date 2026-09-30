@@ -19,9 +19,13 @@ final class FakeClientConnector: ClientConnecting, @unchecked Sendable {
     private let lock = NSLock()
     /// Клиентские концы пар в порядке создания.
     private var _clientConnections: [FakePeerConnection] = []
+    /// Серверные концы пар в порядке создания.
+    private var _serverConnections: [FakePeerConnection] = []
 
     /// Все клиентские концы пар в порядке вызовов `makeConnection`.
     var clientConnections: [FakePeerConnection] { lock.withLock { _clientConnections } }
+    /// Все серверные концы пар в порядке вызовов `makeConnection`.
+    var serverConnections: [FakePeerConnection] { lock.withLock { _serverConnections } }
 
     /// - Parameters:
     ///   - listener: связанный `FakeHostListener`, которому передаётся серверный конец пары.
@@ -35,7 +39,10 @@ final class FakeClientConnector: ClientConnecting, @unchecked Sendable {
 
     nonisolated func makeConnection(serviceName: String, security: ChannelSecurity) -> any PeerConnection {
         let (client, server) = FakePeerConnection.makePair(startReady: !neverReady)
-        lock.withLock { _clientConnections.append(client) }
+        lock.withLock {
+            _clientConnections.append(client)
+            _serverConnections.append(server)
+        }
         listener.accept(server)
         return client
     }
