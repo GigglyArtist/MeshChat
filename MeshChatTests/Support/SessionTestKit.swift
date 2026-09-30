@@ -20,6 +20,19 @@ extension NetworkConfiguration {
         reconnectBackoff: [.milliseconds(50)],
         sessionEndFlushTimeout: .milliseconds(100)
     )
+
+    /// Таймауты для интеграционных тестов сессий через loopback (реальный TLS требует больше времени).
+    static let loopback = NetworkConfiguration(
+        serviceType: "_meshchat._tcp",
+        maxClients: 4,
+        connectTimeout: .seconds(5),
+        handshakeTimeout: .seconds(5),
+        heartbeatInterval: .seconds(60),
+        silenceTimeout: .seconds(60),
+        reconnectGracePeriod: .seconds(60),
+        reconnectBackoff: [.milliseconds(200)],
+        sessionEndFlushTimeout: .milliseconds(500)
+    )
 }
 
 // MARK: - Фабрика идентичностей
