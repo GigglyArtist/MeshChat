@@ -3,7 +3,7 @@
 
 import Foundation
 
-extension Date {
+nonisolated extension Date {
     /// Дата, округлённая вниз до целых миллисекунд.
     ///
     /// Используется при отправке сообщений: локальная копия timestamp совпадает

@@ -3,7 +3,7 @@
 
 import CoreData
 
-extension ChatSessionEntity {
+nonisolated extension ChatSessionEntity {
     /// Преобразует сущность Core Data в доменное описание сессии.
     /// Участники сортируются по никнейму для стабильного порядка.
     nonisolated func toDomain() -> ChatSessionInfo {

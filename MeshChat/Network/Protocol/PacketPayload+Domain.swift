@@ -5,7 +5,7 @@ import Foundation
 
 // MARK: - PeerPayload ↔ PeerProfile
 
-extension PeerPayload {
+nonisolated extension PeerPayload {
     /// Инициализирует DTO из доменной модели участника.
     nonisolated init(_ profile: PeerProfile) {
         self.init(permanentPeerID: profile.id, nickname: profile.nickname)
@@ -19,7 +19,7 @@ extension PeerPayload {
 
 // MARK: - MessagePayload ↔ ChatMessage
 
-extension MessagePayload {
+nonisolated extension MessagePayload {
     /// Инициализирует DTO из доменного сообщения.
     nonisolated init(_ message: ChatMessage) {
         self.init(
@@ -38,7 +38,7 @@ extension MessagePayload {
 
 // MARK: - ParticipantLeftPayload ↔ LeaveReason
 
-extension ParticipantLeftPayload {
+nonisolated extension ParticipantLeftPayload {
     /// Инициализирует DTO с указанием причины в виде доменного типа.
     nonisolated init(peerID: UUID, reason: LeaveReason) {
         self.init(permanentPeerID: peerID, reason: reason.rawValue)

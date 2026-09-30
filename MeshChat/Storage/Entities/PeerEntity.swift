@@ -16,7 +16,7 @@ nonisolated class PeerEntity: NSManagedObject {
     @NSManaged var sessions: Set<ChatSessionEntity>
 }
 
-extension PeerEntity {
+nonisolated extension PeerEntity {
     /// Имя сущности в модели Core Data.
     nonisolated static let entityName = "Peer"
 

@@ -3,7 +3,7 @@
 
 import CoreData
 
-extension MessageEntity {
+nonisolated extension MessageEntity {
     /// Преобразует сущность Core Data в доменное сообщение.
     nonisolated func toDomain() -> ChatMessage {
         ChatMessage(id: id, text: text, timestamp: timestamp, senderID: senderID)

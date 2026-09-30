@@ -12,7 +12,7 @@ nonisolated private struct QRPayload: Codable {
     let key: Data
 }
 
-extension RoomInvite {
+nonisolated extension RoomInvite {
 
     /// Кодирует приглашение в детерминированный JSON-строку для QR-кода.
     /// Ключи отсортированы; data — base64; UTF-8.

@@ -19,7 +19,7 @@ nonisolated class MessageEntity: NSManagedObject {
     @NSManaged var session: ChatSessionEntity?
 }
 
-extension MessageEntity {
+nonisolated extension MessageEntity {
     /// Имя сущности в модели Core Data.
     nonisolated static let entityName = "Message"
 

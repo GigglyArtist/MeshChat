@@ -9,7 +9,7 @@ import Foundation
 /// и `BonjourClientConnector`. Конкретизация `MeshNetworking` для production-окружения.
 ///
 /// Методы выполняются на `@MainActor` (вывод проекта): см. комментарий к `MeshNetworking`.
-struct MeshNetworkService: MeshNetworking {
+nonisolated struct MeshNetworkService: MeshNetworking {
 
     private let configuration: NetworkConfiguration
 

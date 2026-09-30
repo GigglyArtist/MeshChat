@@ -25,7 +25,7 @@ nonisolated class ChatSessionEntity: NSManagedObject {
     }
 }
 
-extension ChatSessionEntity {
+nonisolated extension ChatSessionEntity {
     /// Имя сущности в модели Core Data.
     nonisolated static let entityName = "ChatSession"
 

@@ -3,7 +3,7 @@
 
 import CoreData
 
-extension PeerEntity {
+nonisolated extension PeerEntity {
     /// Преобразует сущность Core Data в доменный профиль участника.
     nonisolated func toDomain() -> PeerProfile {
         PeerProfile(id: id, nickname: nickname)

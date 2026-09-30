@@ -3,7 +3,7 @@
 
 import Foundation
 
-extension UUID {
+nonisolated extension UUID {
     /// 16-байтное big-endian представление UUID (RFC 4122) для хранения в Keychain.
     nonisolated var data: Data {
         withUnsafeBytes(of: uuid) { Data($0) }

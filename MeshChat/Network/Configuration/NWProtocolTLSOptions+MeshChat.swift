@@ -5,7 +5,7 @@ import Foundation
 import Network
 import os
 
-extension NWProtocolTLS.Options {
+nonisolated extension NWProtocolTLS.Options {
     // Logger — Sendable struct; nonisolated static let безопасен без nonisolated(unsafe).
     private nonisolated static let tlsLogger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "meshchat",

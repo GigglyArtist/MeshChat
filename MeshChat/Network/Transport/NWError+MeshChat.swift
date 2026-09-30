@@ -4,7 +4,7 @@
 import Foundation
 import Network
 
-extension NWError {
+nonisolated extension NWError {
     /// Переводит `NWError` в унифицированный `NetworkIssue` (§7.3).
     var issue: NetworkIssue {
         switch self {
