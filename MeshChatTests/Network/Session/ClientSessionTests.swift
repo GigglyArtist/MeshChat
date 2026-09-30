@@ -16,7 +16,6 @@ struct ClientSessionTests {
     // MARK: - Вспомогательные методы
 
     func makeSecret() -> any RoomSecret {
-        // swiftlint:disable:next force_try
         try! RoomCredentials(roomKeyData: Data(repeating: 0xCD, count: 32))
     }
 
