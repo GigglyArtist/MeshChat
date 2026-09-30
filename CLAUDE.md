@@ -74,11 +74,13 @@ xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=<iPhone и
 
 Тесты — Swift Testing (`import Testing`). Сборка и все тесты должны быть зелёными перед каждым коммитом.
 
+**Тесты со временем** (ARCHITECTURE.md §16.3): в сценариях успеха таймауты конфигурации — секунды; короткие (100–300 мс) — только в тестах самого таймаута; ожидание события — `waitFor(timeout: .seconds(5))`; порядок событий обеспечивает код, а не удача. После изменений в `Network/` — весь `MeshChatTests` через `xcodebuild` **10 раз подряд**, все зелёные. Зелёный прогон инструментами Xcode стабильность не доказывает.
+
 ## Коммиты (Conventional Commits, ARCHITECTURE.md §17.4)
 
 - Формат: `<type>(<scope>): <summary>` — повелительное наклонение, по-английски, ≤ 72 символа, без точки в конце. В теле при необходимости: что и зачем + `Refs: ARCHITECTURE.md §N`.
 - Типы: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`, `build`, `style`.
-- Scopes: `config`, `storage`, `security`, `network`, `protocol`, `session`, `app`, `ui`, `chat`, `history`, `qr`, `architecture`.
+- Scopes: `config`, `domain`, `storage`, `security`, `network`, `protocol`, `session`, `app`, `ui`, `chat`, `history`, `qr`, `architecture`.
 - Коммить сам после каждой завершённой фичи, только при зелёной сборке и тестах.
 - Перед коммитом: `git status` и `git diff --staged --stat`. Список файлов в индексе должен совпадать с файлами именно этого коммита. Инструмент записи файлов может добавлять их в индекс сам — лишние убирай через `git restore --staged <file>`. Никогда не коммить `xcuserdata/`, `DerivedData/`, `.DS_Store`.
 - Не делай `git push`, `--force`, `rebase`, `--amend` уже опубликованных коммитов.
