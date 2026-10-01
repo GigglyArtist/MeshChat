@@ -9,11 +9,13 @@ struct AppEnvironment: Sendable {
     let identity: any IdentityProviding
     let storage: any StorageManaging
     let secrets: any RoomSecretProviding
+    /// Фабрика активных комнат: создание и вход (с этапа 7, §13).
+    let rooms: any RoomServicing
 
     // MARK: - Previews
 
     #if DEBUG
-    /// Среда для SwiftUI Previews: PreviewIdentityProvider + in-memory CoreData.
+    /// Среда для SwiftUI Previews: PreviewIdentityProvider + in-memory CoreData + PreviewRoomService.
     @MainActor static func preview(hasNickname: Bool = true) -> AppEnvironment {
         let identity = PreviewIdentityProvider(nickname: hasNickname ? "Preview User" : nil)
         let controller: PersistenceController
@@ -23,7 +25,12 @@ struct AppEnvironment: Sendable {
             fatalError("Preview: не удалось создать in-memory Core Data хранилище: \(error)")
         }
         let storage = CoreDataStorageManager(controller: controller)
-        return AppEnvironment(identity: identity, storage: storage, secrets: RoomCredentialsFactory())
+        return AppEnvironment(
+            identity: identity,
+            storage: storage,
+            secrets: RoomCredentialsFactory(),
+            rooms: PreviewRoomService()
+        )
     }
     #endif
 }

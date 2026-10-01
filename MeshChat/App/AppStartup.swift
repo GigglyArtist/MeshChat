@@ -28,6 +28,13 @@ enum AppStartup {
             return .failed("Не удалось загрузить хранилище данных: \(error.localizedDescription)")
         }
         let storage = CoreDataStorageManager(controller: controller)
-        return .ready(AppEnvironment(identity: identity, storage: storage, secrets: RoomCredentialsFactory()))
+        let secrets = RoomCredentialsFactory()
+        let rooms = RoomService(
+            identity: identity,
+            secrets: secrets,
+            network: MeshNetworkService(),
+            storage: storage
+        )
+        return .ready(AppEnvironment(identity: identity, storage: storage, secrets: secrets, rooms: rooms))
     }
 }
