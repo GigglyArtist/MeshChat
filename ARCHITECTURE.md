@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.7 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.8 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -1341,7 +1341,7 @@ upsertPeer(profile, seenAt):
 
 ## 11. Application Layer: сценарии
 
-Связывает сеть и хранилище. Не знает ни о SwiftUI, ни о Core Data, ни о Network.framework — только протоколы Domain.
+Связывает сеть и хранилище. Не знает ни о SwiftUI, ни о Core Data, ни о Network.framework — только протоколы Domain. Все требования протоколов — `nonisolated` (§7.2).
 
 ```swift
 protocol RoomServicing: Sendable {
@@ -1358,9 +1358,15 @@ protocol ActiveRoomHandling: AnyObject, Sendable {
     /// Только у хоста — для показа QR.
     var invite: RoomInvite? { get }
     var events: AsyncStream<RoomEvent> { get }
+    /// Бросает ошибки сессии (`NetworkError.notActive`, `.invalidMessage`, `.sendFailed`).
     func send(text: String) async throws
+    /// Хост завершает комнату, клиент выходит. Итог — `stateChanged(.ended(.leftByUser))`.
     func leave() async
-    func appDidBecomeActive() async
+    // Этап 8: func appDidBecomeActive() async
+}
+
+enum RoomError: Error, Sendable, Equatable {
+    case nicknameMissing             // онбординг не пройден — комнату создать нельзя
 }
 
 enum RoomEvent: Sendable, Equatable {
@@ -1394,7 +1400,31 @@ protocol HistoryServicing: Sendable {
 | `stateChanged(.ended)` | `endSession(endedAt: now)` | `stateChanged` |
 | Своя отправка | `saveMessage` **после** успешного `session.send` | `messageAppended` |
 
-Ошибка хранилища во время живого чата **не** прерывает чат: пишется в лог, UI продолжает работу. Живое общение важнее истории.
+Ошибка хранилища во время живого чата **не** прерывает чат: пишется в лог, UI продолжает работу. Живое общение важнее истории. Это касается и `createSession` хоста в `RoomService.createRoom`.
+
+### 11.2. Устройство `RoomService` и `ActiveRoom`
+
+```swift
+struct RoomService: RoomServicing {          // nonisolated, без состояния
+    init(identity: any IdentityProviding, secrets: any RoomSecretProviding,
+         network: any MeshNetworking, storage: any StorageManaging,
+         now: @escaping @Sendable () -> Date = { Date() })
+}
+
+actor ActiveRoom: ActiveRoomHandling {
+    /// sessionID: у хоста известен сразу (HostSessionManaging.sessionID), у клиента nil до established.
+    init(session: any ChatSessionManaging, storage: any StorageManaging, localPeerID: UUID,
+         invite: RoomInvite?, sessionID: UUID?, now: @escaping @Sendable () -> Date = { Date() })
+    /// Запускает цикл обработки событий сессии и саму сессию. Идемпотентно.
+    func start() async
+}
+```
+
+- **createRoom:** ник есть (иначе `RoomError.nicknameMissing`) → `LocalIdentity` → `secrets.makeSecret(password:)` → `network.makeHostSession` → `storage.createSession(id: sessionID, role: .host, …)` (ошибка — только лог) → `ActiveRoom(…, invite: hostSession.invite, sessionID: hostSession.sessionID)` → `start()`.
+- **joinRoom:** ник есть → `secrets.secret(from: invite)` → `network.makeClientSession` → `ActiveRoom(…, invite: nil, sessionID: nil)` → `start()`.
+- **Один цикл.** `ActiveRoom` читает `session.events` ровно в одной задаче и обрабатывает события **последовательно**, дожидаясь записи в хранилище (таблица §11.1). Поэтому у клиента `createSession` всегда выполняется раньше, чем `addParticipant` и `saveMessage`.
+- `participantsChanged` всегда несёт **полный** текущий список участников, кроме себя.
+- После `stateChanged(.ended)` поток `RoomEvent` завершается.
 
 ---
 
@@ -1411,18 +1441,26 @@ protocol HistoryServicing: Sendable {
 | `CreateRoomView` | `CreateRoomViewModel` | Ввод пароля → создание комнаты → `RoomQRCodeView` |
 | `RoomQRCodeView` | — | QR приглашения (с этапа 7 — sheet из чата хоста) |
 | `JoinRoomView` | `JoinRoomViewModel` | Сканер QR (VisionKit) → подключение |
-
-**Временная схема этапов 3–5** (до появления сети): `CreateRoomViewModel` сам создаёт секрет через `RoomSecretProviding` и приглашение со случайным `serviceName`, а `JoinRoomViewModel` только проверяет QR и показывает «Приглашение распознано». На этапе 6 оба переходят на `RoomServicing.createRoom` / `joinRoom`, и `serviceName` начинает генерировать `HostSession` (§7.5).
-| `ChatView` | `ChatViewModel` | Лента, ввод, участники, баннеры состояния |
+| `ChatView` | `ChatViewModel` | Лента, ввод, участники, баннеры состояния; у хоста — кнопка QR (sheet `RoomQRCodeView`) |
 | `PeersListView` | `HistoryViewModel` | Известные собеседники |
 | `PeerHistoryView` | `PeerHistoryViewModel` | Сессии и сообщения с одним человеком (только чтение) |
 
-Навигация: `NavigationStack(path:)` с `enum Route: Hashable { case createRoom, joinRoom }` в `RootView` (список маршрутов растёт по этапам).
+**С этапа 7** временная схема этапов 3–6 снята: `CreateRoomViewModel` вызывает `RoomServicing.createRoom`, `JoinRoomViewModel` — `joinRoom`; оба после успеха открывают чат.
+
+**Навигация:** `NavigationStack(path:)` в `RootView`, `enum Route: Hashable { case createRoom, joinRoom, chat(ChatRoute) }`. `ChatRoute` — обёртка над `any ActiveRoomHandling` с равенством и хэшем по `ObjectIdentifier`. После создания или входа путь **заменяется** на `[.chat(…)]`, чтобы «Назад» не вёл на экран пароля или сканера. Системная кнопка «Назад» в чате скрыта: выход — только через «Выйти» / «Завершить» с подтверждением, затем `path.removeAll()`.
+
+### 12.1.1. Чат
+
+- **Строки ленты** (`ChatRow`): сообщение (текст, время, `isOutgoing = senderID == localPeerID`, имя автора) или системная строка («Вова присоединился», «Вова вышел», «Вова отключился»). Порядок — порядок поступления.
+- **Имена авторов:** ViewModel хранит словарь `PermanentPeerID → ник`, который только пополняется из `participantsChanged` (ушедшие не удаляются). Свои сообщения подписаны «Вы», неизвестный ID — «Неизвестный».
+- **Отправка:** `canSend = state == .active && MessageTextPolicy.normalize(draft) != nil`. Успех — черновик очищается. Ошибка — черновик сохраняется, показывается текст ошибки.
+- **Экран не гаснет:** `UIApplication.shared.isIdleTimerDisabled = true` на время чата (ADR-11).
+- **Баннер** — чистая функция `SessionState → текст` по таблице §12.3, покрывается параметризованным тестом.
 
 ### 12.2. Правила
 
 - ViewModel: `@Observable @MainActor final class`. Зависимости — только протоколы (`any RoomServicing`, `any HistoryServicing`, `any IdentityProviding`), через `init`.
-- События комнаты ViewModel читает в `.task { await viewModel.observe() }` — задача автоматически отменяется при уходе с экрана.
+- События комнаты ViewModel читает в **собственной** задаче, запущенной один раз (`start()` идемпотентен; View вызывает его в `.onAppear`). **Не** в `.task` View: отмена `.task` при исчезновении View завершает `AsyncStream` навсегда (у потока один потребитель), и чат перестал бы получать события.
 - View не содержит логики: только отображение состояния и вызов методов ViewModel.
 - Каждый экран имеет `#Preview` на фейках из `AppEnvironment.preview`.
 - **UI не отказывает молча.** Если картинку, QR или другой ресурс не удалось построить — ошибка пишется в `Logger`, а на экране появляется понятный текст («Не удалось построить QR-код»), а не пустое место.
@@ -1482,8 +1520,8 @@ struct MeshChatApp: App {
 struct AppEnvironment: Sendable {
     let identity: any IdentityProviding
     let storage: any StorageManaging
-    let secrets: any RoomSecretProviding        // с этапа 3
-    // Добавляются в своих этапах: rooms: any RoomServicing (6), history: any HistoryServicing (10)
+    let rooms: any RoomServicing                // с этапа 7 (secrets ушёл внутрь RoomService)
+    // Этап 10: history: any HistoryServicing
 
     #if DEBUG
     @MainActor static func preview() -> AppEnvironment { /* фейки + in-memory хранилище */ }
@@ -1639,6 +1677,7 @@ Swift Testing запускает тесты **параллельно**, поэт
   | Obj-C-глобалы вроде `NSMergeByPropertyObjectTrumpMergePolicy` | Swift-API: `NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)` |
   | `fetchRequest()` в расширениях сущностей | Не используется; запросы строятся в `CoreDataStorageManager` через `NSFetchRequest<T>(entityName: T.entityName)` |
   | Протокол вне Presentation/App | `nonisolated` на каждом требовании; у актора синхронные свойства — `nonisolated let` (§7.2) |
+  | `init` актора | В режиме `MainActor` по умолчанию синхронный `init` актора выводится как `@MainActor`, и создать актор из неизолированного кода нельзя. Решение — `nonisolated init(...)` (это разрешено SE-0327) |
 
 - `nonisolated(unsafe)` и `@unchecked Sendable` — только с комментарием, объясняющим безопасность.
 
@@ -1721,7 +1760,7 @@ docs(architecture): describe TLS-PSK channel security
 | 4 | Протокол | `Packet`, `PacketCodec`, `FrameAssembler`, тесты | §8 |
 | 5 | Транспорт | `NWPeerConnection`, `BonjourHostListener`, `BonjourClientConnector`, TLS-PSK; тесты через 127.0.0.1 | §7.1–7.4 |
 | 6 | Сетевые сессии | `HostSession`, `ClientSession`: хэндшейк, лимит 4, участники, ретрансляция сообщений, выход; тестовая сеть; `MeshNetworkService` | §7.2, §7.5–7.8 |
-| 7 | Комната и чат | `ActiveRoom`, `RoomService`, привязка к истории, `ChatView`; первый чат между двумя телефонами | §11, §12 |
+| 7 | Комната и чат | `ActiveRoom`, `RoomService`, привязка к истории, `ChatView`, сквозной тест «две комнаты — одна история»; первый чат между двумя устройствами | §11, §12 |
 | 8 | Надёжность | Heartbeat, грейс-период 20 с, реконнект, потеря хоста/клиента, `scenePhase` | §9, ADR-11 |
 | 9 | Проверка шифрования | TLS-PSK на двух устройствах; по желанию — снимок трафика, в котором не видно ID и ников | ADR-03, §15.1 |
 | 10 | История | Экраны истории, удаление сессий | §10.4, §12 |
@@ -1796,3 +1835,13 @@ docs(architecture): describe TLS-PSK channel security
 |---|---|---|
 | §16.3 | Правила тестов со временем; 10 прогонов подряд после изменений в сессиях и сети | `ClientSessionTests/successfulHandshake()` падал в 2 из 3 прогонов через `xcodebuild`, хотя у агента через инструменты Xcode был зелёным |
 | §17.4 | Scope `domain` | Коммиты, затрагивающие только Domain |
+
+### v1.8 — перед задачей 07
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| §11 | `nonisolated`-требования; `appDidBecomeActive` — этап 8; `RoomError`; устройство `RoomService` и `ActiveRoom` (§11.2) | Порядок записи в хранилище должен гарантироваться кодом |
+| §12.1 | Таблица экранов восстановлена; навигация с `ChatRoute` и заменой пути; §12.1.1 «Чат» | Экран чата появляется на этапе 7 |
+| §12.2 | ViewModel читает события в своей задаче, а не в `.task` View | Отмена `.task` навсегда завершает `AsyncStream` с одним потребителем |
+| §13 | `AppEnvironment.rooms` вместо `secrets` | Секреты создаёт `RoomService` |
+| §17.1 | `nonisolated init` у акторов | В задаче 06b фабрика сессий не собиралась с `nonisolated`: `init` акторов выводился как `@MainActor` |

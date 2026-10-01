@@ -38,6 +38,8 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
   - срезы `Data` сохраняют индексы исходника: индексируй от `startIndex`, наружу отдавай `Data(slice)`;
   - протоколы вне Presentation/App — `nonisolated` на **каждом** требовании; у актора синхронные свойства из протокола — `nonisolated let`;
   - акторы реентерабельны: после каждого `await` перепроверяй состояние (участник мог уйти, сессия — завершиться).
+  - синхронный `init` актора в режиме `MainActor` по умолчанию становится `@MainActor` → пиши `nonisolated init(...)`;
+  - события `AsyncStream` во ViewModel читаются в собственной задаче (`start()` идемпотентен), не в `.task` View.
 
 ## Стиль
 
@@ -97,6 +99,6 @@ xcodebuild -scheme MeshChat -destination 'platform=iOS Simulator,name=<iPhone и
 2. **Файлы** — созданные, изменённые, удалённые, перемещённые.
 3. **Коммиты** — `git log --oneline --decorate` новых коммитов. Сверь с планом коммитов из промпта: если какие-то объединены, разделены или пропущены — перечисли и объясни.
 4. **Тег** — вывод `git tag --points-at HEAD`.
-5. **Тесты** — **дословно** итоговые строки из вывода `xcodebuild test`: `Executed N tests, with M failures …` (или `Test run with N tests …`, если она есть) и `** TEST SUCCEEDED **`. Ничего не оценивай и не пересчитывай вручную: параметризованный тест считается по числу аргументов. Если есть отключённые (`.disabled`) тесты — перечисли их с причиной.
+5. **Тесты** — запусти `xcodebuild test … -resultBundlePath /tmp/meshchat-result.xcresult` (папку перед этим удали) и выведи **дословно** `** TEST SUCCEEDED **` и счётчики из `xcrun xcresulttool get test-results summary --path /tmp/meshchat-result.xcresult` (`totalTestCount`, `passedTests`, `failedTests`, `skippedTests`). Ничего не пересчитывай вручную. Если есть отключённые (`.disabled`) тесты — перечисли их с причиной.
 6. **Отклонения и вопросы** — всё, что сделано не так, как написано в промпте, включая пути к файлам.
 7. **Рабочая копия** — вывод `git status --short` в конце задачи. Он должен быть пустым; если нет — объясни каждую строку.
