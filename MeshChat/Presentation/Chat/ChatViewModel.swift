@@ -54,6 +54,17 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
     /// QR-приглашение: только у хоста.
     var invite: RoomInvite? { room.invite }
 
+    /// QR-payload для sheet-а хоста. `nil` — не хост или ошибка кодирования (логируется).
+    var qrPayload: String? {
+        guard let invite = room.invite else { return nil }
+        do {
+            return try invite.qrPayload()
+        } catch {
+            logger.error("qrPayload build failed: \(error, privacy: .public)")
+            return nil
+        }
+    }
+
     // MARK: - Приватное состояние
 
     private let room: any ActiveRoomHandling

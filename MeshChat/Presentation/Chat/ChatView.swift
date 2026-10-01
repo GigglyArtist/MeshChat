@@ -2,9 +2,6 @@
 // Copyright (C) 2026 MeshChat contributors
 
 import SwiftUI
-import os
-
-private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.meshchat", category: "ui")
 
 /// Экран активной комнаты: лента сообщений, ввод, баннер состояния (§12.1.1).
 struct ChatView: View {
@@ -113,25 +110,19 @@ struct ChatView: View {
 
     @ViewBuilder
     private var qrSheet: some View {
-        if let invite = viewModel.invite {
-            let payload: String? = try? invite.qrPayload()
-            if let p = payload {
-                NavigationStack {
-                    RoomQRCodeView(qrPayload: p)
-                        .navigationTitle("QR-код комнаты")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .confirmationAction) {
-                                Button("Готово") { showQRSheet = false }
-                            }
+        if let payload = viewModel.qrPayload {
+            NavigationStack {
+                RoomQRCodeView(qrPayload: payload)
+                    .navigationTitle("QR-код комнаты")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Готово") { showQRSheet = false }
                         }
-                }
-            } else {
-                Text("Не удалось построить QR-код")
-                    .onAppear {
-                        logger.error("Failed to build QR payload for host invite")
                     }
             }
+        } else {
+            Text("Не удалось построить QR-код")
         }
     }
 }
