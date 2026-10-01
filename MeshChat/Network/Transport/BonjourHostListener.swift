@@ -74,24 +74,31 @@ nonisolated final class BonjourHostListener: HostListening, @unchecked Sendable 
     // MARK: - Настройка колбэков listener'а
 
     private func setupHandlers(for listener: NWListener) {
-        listener.stateUpdateHandler = { [weak self] state in
-            self?.handleListenerState(state)
+        // Захватываем конкретный экземпляр listener'а, чтобы после перезапуска
+        // колбэки устаревшего listener'а не трогали новый поток событий.
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            guard let self, let listener else { return }
+            self.handleListenerState(state, for: listener)
         }
 
-        listener.newConnectionHandler = { [weak self] connection in
-            guard let self else { return }
+        listener.newConnectionHandler = { [weak self, weak listener] connection in
+            guard let self, let listener else { return }
             let peerConn = NWPeerConnection(connection: connection)
-            lock.lock()
-            let cont = continuation
-            lock.unlock()
+            self.lock.lock()
+            let cont = self.nwListener === listener ? self.continuation : nil
+            self.lock.unlock()
             cont?.yield(.incoming(peerConn))
         }
     }
 
-    private func handleListenerState(_ state: NWListener.State) {
+    private func handleListenerState(_ state: NWListener.State, for listener: NWListener) {
         lock.lock()
-        let cont = continuation
+        // Игнорируем события от устаревшего listener'а (например, .cancelled после перезапуска).
+        let isCurrent = (nwListener === listener)
+        let cont = isCurrent ? continuation : nil
         lock.unlock()
+
+        guard isCurrent else { return }
 
         switch state {
         case .ready:
