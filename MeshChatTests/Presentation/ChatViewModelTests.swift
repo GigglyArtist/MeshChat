@@ -22,6 +22,22 @@ struct ChatViewModelTests {
         return (vm, room)
     }
 
+    /// Ожидает наступления условия с поллингом (§16.3).
+    ///
+    /// Каждые 20 мс отпускает MainActor, давая eventTask ViewModel обработать события.
+    func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        if condition() { return }
+        struct WaitTimeout: Error, CustomStringConvertible {
+            var description: String { "waitUntil timed out" }
+        }
+        throw WaitTimeout()
+    }
+
     // MARK: 1. start() идемпотентен
 
     @Test("start() дважды не создаёт дублирующий цикл событий")
@@ -32,7 +48,7 @@ struct ChatViewModelTests {
 
         let alice = PeerProfile(id: UUID(), nickname: "Alice")
         room.emit(.participantsChanged([alice]))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { vm.participants.count == 1 }
 
         #expect(vm.participants.count == 1)
     }
@@ -47,7 +63,7 @@ struct ChatViewModelTests {
         let alice = PeerProfile(id: UUID(), nickname: "Alice")
         let bob = PeerProfile(id: UUID(), nickname: "Bob")
         room.emit(.participantsChanged([alice, bob]))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { vm.participants.count == 2 }
 
         #expect(vm.participants.count == 2)
     }
@@ -65,7 +81,7 @@ struct ChatViewModelTests {
         let msg = ChatMessage(id: UUID(), text: "hello",
                               timestamp: Date().flooredToMilliseconds, senderID: senderID)
         room.emit(.messageAppended(msg))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { vm.items.count == 1 }
 
         #expect(vm.items.count == 1)
         if case .message(let m, let isOut, let name) = vm.items[0] {
@@ -87,7 +103,7 @@ struct ChatViewModelTests {
         let msg = ChatMessage(id: UUID(), text: "hi",
                               timestamp: Date().flooredToMilliseconds, senderID: localID)
         room.emit(.messageAppended(msg))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { !vm.items.isEmpty }
 
         if case .message(_, let isOut, let name) = vm.items.first {
             #expect(isOut)
@@ -105,7 +121,7 @@ struct ChatViewModelTests {
         vm.start()
 
         room.emit(.notice(.joined(nickname: "Charlie")))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { !vm.items.isEmpty }
 
         if case .notice(_, let text) = vm.items.first {
             #expect(text == "Charlie присоединился")
@@ -122,7 +138,7 @@ struct ChatViewModelTests {
         vm.start()
 
         room.emit(.stateChanged(.active))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { if case .active = vm.sessionState { return true }; return false }
 
         if case .active = vm.sessionState { } else {
             Issue.record("Expected .active, got \(vm.sessionState)")
@@ -143,7 +159,7 @@ struct ChatViewModelTests {
         let (vm, room) = makeViewModel()
         vm.start()
         room.emit(.stateChanged(.active))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { if case .active = vm.sessionState { return true }; return false }
 
         vm.draft = "hello"
         #expect(vm.canSend)
@@ -154,7 +170,7 @@ struct ChatViewModelTests {
         let (vm, room) = makeViewModel()
         vm.start()
         room.emit(.stateChanged(.active))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { if case .active = vm.sessionState { return true }; return false }
 
         vm.draft = "   "
         #expect(!vm.canSend)
@@ -167,7 +183,7 @@ struct ChatViewModelTests {
         let (vm, room) = makeViewModel()
         vm.start()
         room.emit(.stateChanged(.active))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { if case .active = vm.sessionState { return true }; return false }
 
         vm.draft = "hello"
         await vm.send()
@@ -183,7 +199,7 @@ struct ChatViewModelTests {
         room.sendError = NetworkError.notActive
         vm.start()
         room.emit(.stateChanged(.active))
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { if case .active = vm.sessionState { return true }; return false }
 
         vm.draft = "hello"
         await vm.send()
