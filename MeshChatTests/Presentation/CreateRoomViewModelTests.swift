@@ -5,13 +5,17 @@ import Testing
 import Foundation
 @testable import MeshChat
 
-@Suite("CreateRoomViewModel", .serialized)
 @MainActor
+@Suite("CreateRoomViewModel", .serialized)
 struct CreateRoomViewModelTests {
 
-    private func makeViewModel(peerID: UUID = UUID()) -> CreateRoomViewModel {
-        CreateRoomViewModel(secrets: RoomCredentialsFactory(), peerID: peerID)
+    func makeViewModel(
+        createError: RoomError? = nil
+    ) -> CreateRoomViewModel {
+        CreateRoomViewModel(rooms: FakeRoomService(createError: createError))
     }
+
+    // MARK: 1. canCreate
 
     @Test("Пустой пароль — canCreate == false")
     func canCreateFalseInitially() {
@@ -39,48 +43,44 @@ struct CreateRoomViewModelTests {
         #expect(vm.canCreate)
     }
 
-    @Test("createRoom с валидным паролем переходит в .ready")
-    func createRoomTransitionsToReady() {
+    // MARK: 2. createRoom success
+
+    @Test("createRoom с валидным паролем — createdRoom не nil")
+    func createRoomSuccess() async throws {
         let vm = makeViewModel()
         vm.passwordInput = "secret123"
-        vm.createRoom()
-        if case .ready = vm.state {
-            // ok
-        } else {
-            Issue.record("Expected .ready, got \(vm.state)")
-        }
+        await vm.createRoom()
+        #expect(vm.createdRoom != nil)
     }
 
     @Test("createRoom очищает пароль")
-    func createRoomClearsPassword() {
+    func createRoomClearsPassword() async {
         let vm = makeViewModel()
         vm.passwordInput = "secret123"
-        vm.createRoom()
+        await vm.createRoom()
         #expect(vm.passwordInput.isEmpty)
     }
 
-    @Test("createRoom с пустым паролем не меняет состояние")
-    func createRoomIgnoresEmptyPassword() {
+    @Test("createRoom с пустым паролем ничего не делает")
+    func createRoomIgnoresEmptyPassword() async {
         let vm = makeViewModel()
-        vm.createRoom()
-        if case .editing = vm.state {
-            // ok
-        } else {
+        await vm.createRoom()
+        if case .editing = vm.state { } else {
             Issue.record("Expected .editing, got \(vm.state)")
         }
+        #expect(vm.createdRoom == nil)
     }
 
-    @Test("serviceName в приглашении совпадает с peerID")
-    func serviceNameMatchesPeerID() throws {
-        let peerID = UUID()
-        let vm = makeViewModel(peerID: peerID)
+    // MARK: 3. createRoom failure
+
+    @Test("createRoom с nicknameMissing переходит в .failed")
+    func createRoomNicknameMissingFails() async {
+        let vm = makeViewModel(createError: .nicknameMissing)
         vm.passwordInput = "secret123"
-        vm.createRoom()
-        guard case .ready(let qrPayload) = vm.state else {
-            Issue.record("Expected .ready")
-            return
+        await vm.createRoom()
+        if case .failed = vm.state { } else {
+            Issue.record("Expected .failed, got \(vm.state)")
         }
-        let invite = try RoomInvite.parse(qrPayload: qrPayload)
-        #expect(invite.serviceName == peerID.uuidString)
+        #expect(vm.createdRoom == nil)
     }
 }
