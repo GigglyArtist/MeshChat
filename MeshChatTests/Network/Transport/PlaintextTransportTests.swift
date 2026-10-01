@@ -226,7 +226,8 @@ struct PlaintextTransportTests {
         let harness = try await LoopbackHarness.start()
 
         harness.stop()
-        try await harness.listenerProbe.waitForFinish(timeout: .seconds(5))
+        // Bonjour de-registration и завершение потока может занять несколько секунд.
+        try await harness.listenerProbe.waitForFinish(timeout: .seconds(10))
 
         // Перезапускаем тот же BonjourHostListener.
         let serviceName = "Restart-\(UUID().uuidString.prefix(8))"
@@ -234,7 +235,8 @@ struct PlaintextTransportTests {
         let newProbe = EventProbe<ListenerEvent>(stream: newStream)
         defer { harness.listener.stop() }
 
-        let readyEvent = try await newProbe.waitFor(timeout: .seconds(5)) {
+        // Bonjour re-registration после перезапуска может занять > 5 с (§16.3).
+        let readyEvent = try await newProbe.waitFor(timeout: .seconds(10)) {
             if case .ready = $0 { return true }; return false
         }
         guard case .ready(let newPort) = readyEvent else {
@@ -254,7 +256,7 @@ struct PlaintextTransportTests {
         client.start()
         defer { client.cancel() }
 
-        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(10)) {
             if case .state(.ready) = $0 { return true }; return false
         }
     }
