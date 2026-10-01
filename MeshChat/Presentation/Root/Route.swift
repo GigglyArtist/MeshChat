@@ -7,4 +7,6 @@ import Foundation
 enum Route: Hashable {
     case createRoom
     case joinRoom
+    /// Активный чат; путь заменяется на `[.chat(…)]` после создания/входа.
+    case chat(ChatRoute)
 }

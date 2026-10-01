@@ -2,6 +2,9 @@
 // Copyright (C) 2026 MeshChat contributors
 
 import Foundation
+import os
+
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.meshchat", category: "ui")
 
 /// ViewModel экрана входа в комнату по QR (§12.1).
 @Observable @MainActor final class JoinRoomViewModel {
@@ -10,26 +13,28 @@ import Foundation
         case checkingCamera
         case scanning
         case cameraDenied
-        case found(invite: RoomInvite)
+        case joining
         case failed(String)
     }
 
     private(set) var state: State = .checkingCamera
+    /// Установлена после успешного `joinRoom`; View наблюдает и вызывает `onSuccess`.
+    private(set) var joinedRoom: (any ActiveRoomHandling)?
 
     #if DEBUG
     var debugPayloadInput: String = ""
     #endif
 
-    private let secrets: any RoomSecretProviding
+    private let rooms: any RoomServicing
     private let checkCamera: () -> CameraPermission
     private let requestCamera: () async -> CameraPermission
 
     init(
-        secrets: any RoomSecretProviding,
+        rooms: any RoomServicing,
         checkCamera: @escaping () -> CameraPermission = { CameraPermission.current() },
         requestCamera: @escaping () async -> CameraPermission = { await CameraPermission.request() }
     ) {
-        self.secrets = secrets
+        self.rooms = rooms
         self.checkCamera = checkCamera
         self.requestCamera = requestCamera
     }
@@ -50,12 +55,12 @@ import Foundation
         guard case .scanning = state else { return }
         do {
             let invite = try RoomInvite.parse(qrPayload: payload)
-            _ = try secrets.secret(from: invite)
-            state = .found(invite: invite)
+            state = .joining
+            Task { await join(invite: invite) }
         } catch InviteError.unsupportedVersion(let v) {
             state = .failed("Неподдерживаемая версия приглашения (\(v)).")
         } catch {
-            // notMeshChatCode, invalidKey — не MeshChat QR, продолжаем сканировать
+            // Не MeshChat QR — продолжаем сканировать
             return
         }
     }
@@ -65,4 +70,16 @@ import Foundation
         handleScan(debugPayloadInput)
     }
     #endif
+
+    private func join(invite: RoomInvite) async {
+        do {
+            let room = try await rooms.joinRoom(invite: invite)
+            joinedRoom = room
+        } catch RoomError.nicknameMissing {
+            state = .failed("Укажите ник перед входом в комнату")
+        } catch {
+            logger.error("joinRoom failed: \(error, privacy: .public)")
+            state = .failed("Не удалось подключиться к комнате")
+        }
+    }
 }

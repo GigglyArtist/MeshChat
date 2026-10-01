@@ -3,13 +3,15 @@
 
 import SwiftUI
 
-/// Экран создания комнаты: ввод пароля → QR-приглашение (§12.1).
+/// Экран создания комнаты: ввод пароля → вызов `RoomServicing.createRoom` → переход в чат (§12.1).
 struct CreateRoomView: View {
 
     @State private var viewModel: CreateRoomViewModel
+    private let onSuccess: (any ActiveRoomHandling) -> Void
 
-    init(secrets: any RoomSecretProviding, peerID: UUID) {
-        _viewModel = State(wrappedValue: CreateRoomViewModel(secrets: secrets, peerID: peerID))
+    init(rooms: any RoomServicing, onSuccess: @escaping (any ActiveRoomHandling) -> Void) {
+        _viewModel = State(wrappedValue: CreateRoomViewModel(rooms: rooms))
+        self.onSuccess = onSuccess
     }
 
     var body: some View {
@@ -17,14 +19,21 @@ struct CreateRoomView: View {
             switch viewModel.state {
             case .editing:
                 editingView
-            case .ready(let qrPayload):
-                RoomQRCodeView(qrPayload: qrPayload)
+            case .loading:
+                ProgressView("Создание комнаты…")
             case .failed(let message):
-                ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(message))
+                ContentUnavailableView(
+                    "Ошибка",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(message)
+                )
             }
         }
         .navigationTitle("Создать комнату")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: viewModel.createdRoom != nil) { _, isSet in
+            if isSet, let room = viewModel.createdRoom { onSuccess(room) }
+        }
     }
 
     private var editingView: some View {
@@ -38,7 +47,7 @@ struct CreateRoomView: View {
 
             Section {
                 Button("Создать") {
-                    viewModel.createRoom()
+                    Task { await viewModel.createRoom() }
                 }
                 .disabled(!viewModel.canCreate)
             }
@@ -49,7 +58,7 @@ struct CreateRoomView: View {
 #if DEBUG
 #Preview {
     NavigationStack {
-        CreateRoomView(secrets: RoomCredentialsFactory(), peerID: UUID())
+        CreateRoomView(rooms: PreviewRoomService(), onSuccess: { _ in })
     }
 }
 #endif

@@ -11,39 +11,40 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
 
     enum State {
         case editing
-        case ready(qrPayload: String)
+        case loading
         case failed(String)
     }
 
     var passwordInput: String = ""
     private(set) var state: State = .editing
+    /// Установлена после успешного `createRoom`; View наблюдает и вызывает `onSuccess`.
+    private(set) var createdRoom: (any ActiveRoomHandling)?
 
-    private let secrets: any RoomSecretProviding
-    private let serviceName: String
+    private let rooms: any RoomServicing
 
-    var canCreate: Bool { RoomPasswordPolicy.isValid(passwordInput) }
-
-    init(secrets: any RoomSecretProviding, peerID: UUID) {
-        self.secrets = secrets
-        self.serviceName = peerID.uuidString
+    var canCreate: Bool {
+        guard case .editing = state else { return false }
+        return RoomPasswordPolicy.isValid(passwordInput)
     }
 
-    func createRoom() {
+    init(rooms: any RoomServicing) {
+        self.rooms = rooms
+    }
+
+    func createRoom() async {
         guard canCreate else { return }
-        let secret = secrets.makeSecret(password: passwordInput)
-        let invite = RoomInvite(
-            version: RoomInvite.currentVersion,
-            serviceName: serviceName,
-            roomKey: secret.roomKeyData
-        )
-        // Очищаем пароль сразу после использования — §6.3
+        state = .loading
+        let password = passwordInput
+        // Очищаем пароль сразу — §6.3
         passwordInput = ""
         do {
-            let payload = try invite.qrPayload()
-            state = .ready(qrPayload: payload)
+            let room = try await rooms.createRoom(password: password)
+            createdRoom = room
+        } catch RoomError.nicknameMissing {
+            state = .failed("Укажите ник перед созданием комнаты")
         } catch {
-            logger.error("Failed to encode QR payload: \(error.localizedDescription, privacy: .public)")
-            state = .failed("Не удалось сформировать QR-код")
+            logger.error("createRoom failed: \(error, privacy: .public)")
+            state = .failed("Не удалось создать комнату")
         }
     }
 }

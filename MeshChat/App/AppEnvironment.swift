@@ -8,8 +8,7 @@ import Foundation
 struct AppEnvironment: Sendable {
     let identity: any IdentityProviding
     let storage: any StorageManaging
-    let secrets: any RoomSecretProviding
-    /// Фабрика активных комнат: создание и вход (с этапа 7, §13).
+    /// Фабрика активных комнат: создание и вход (§13, с этапа 7 `secrets` внутри RoomService).
     let rooms: any RoomServicing
 
     // MARK: - Previews
@@ -28,7 +27,6 @@ struct AppEnvironment: Sendable {
         return AppEnvironment(
             identity: identity,
             storage: storage,
-            secrets: RoomCredentialsFactory(),
             rooms: PreviewRoomService()
         )
     }

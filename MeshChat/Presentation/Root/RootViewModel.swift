@@ -26,4 +26,10 @@ import Observation
     func navigate(to route: Route) {
         navigationPath.append(route)
     }
+
+    /// Заменяет весь стек на единственный маршрут `.chat(…)`.
+    /// «Назад» из чата не ведёт на экран пароля или сканера (§12.1).
+    func navigateToChat(room: any ActiveRoomHandling) {
+        navigationPath = [.chat(ChatRoute(room: room))]
+    }
 }

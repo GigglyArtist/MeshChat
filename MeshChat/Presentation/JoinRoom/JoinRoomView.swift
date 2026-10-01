@@ -8,9 +8,11 @@ import VisionKit
 struct JoinRoomView: View {
 
     @State private var viewModel: JoinRoomViewModel
+    private let onSuccess: (any ActiveRoomHandling) -> Void
 
-    init(secrets: any RoomSecretProviding) {
-        _viewModel = State(wrappedValue: JoinRoomViewModel(secrets: secrets))
+    init(rooms: any RoomServicing, onSuccess: @escaping (any ActiveRoomHandling) -> Void) {
+        _viewModel = State(wrappedValue: JoinRoomViewModel(rooms: rooms))
+        self.onSuccess = onSuccess
     }
 
     var body: some View {
@@ -22,15 +24,22 @@ struct JoinRoomView: View {
                 scanningView
             case .cameraDenied:
                 cameraDeniedView
-            case .found(let invite):
-                foundView(invite: invite)
+            case .joining:
+                ProgressView("Подключение…")
             case .failed(let message):
-                ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(message))
+                ContentUnavailableView(
+                    "Ошибка",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(message)
+                )
             }
         }
         .navigationTitle("Войти по QR")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.prepare() }
+        .onChange(of: viewModel.joinedRoom != nil) { _, isSet in
+            if isSet, let room = viewModel.joinedRoom { onSuccess(room) }
+        }
     }
 
     @ViewBuilder
@@ -65,19 +74,6 @@ struct JoinRoomView: View {
                 }
             }
         }
-    }
-
-    private func foundView(invite: RoomInvite) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(.green)
-            Text("QR-код распознан")
-                .font(.title2.bold())
-            Text("Подключение к сервису «\(invite.serviceName)»…")
-                .foregroundStyle(.secondary)
-        }
-        .padding()
     }
 
     #if DEBUG

@@ -25,6 +25,10 @@ struct RootView: View {
         }
     }
 
+    private var localNickname: String {
+        environment.identity.nickname() ?? ""
+    }
+
     private var homeNavigationStack: some View {
         NavigationStack(path: $viewModel.navigationPath) {
             HomeView(
@@ -35,12 +39,19 @@ struct RootView: View {
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .createRoom:
-                    CreateRoomView(
-                        secrets: environment.secrets,
-                        peerID: (try? environment.identity.permanentPeerID()) ?? UUID()
-                    )
+                    CreateRoomView(rooms: environment.rooms) { room in
+                        viewModel.navigateToChat(room: room)
+                    }
                 case .joinRoom:
-                    JoinRoomView(secrets: environment.secrets)
+                    JoinRoomView(rooms: environment.rooms) { room in
+                        viewModel.navigateToChat(room: room)
+                    }
+                case .chat(let chatRoute):
+                    ChatView(
+                        room: chatRoute.room,
+                        localNickname: localNickname,
+                        onLeave: { viewModel.navigationPath.removeAll() }
+                    )
                 }
             }
         }
