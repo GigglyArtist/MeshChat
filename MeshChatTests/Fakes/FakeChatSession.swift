@@ -20,13 +20,14 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
     /// `PermanentPeerID`, который возвращают сообщения из `send(text:)`.
     nonisolated let senderID: UUID
 
-    // MARK: - Внутреннее состояние
+    // MARK: - Внутреннее состояние (защищены NSLock)
 
     private let lock = NSLock()
-    private var continuation: AsyncStream<SessionEvent>.Continuation?
-    private var _sentTexts: [String] = []
+    // nonisolated(unsafe): доступ только через lock — NSLock обеспечивает взаимоисключение.
+    nonisolated(unsafe) private var continuation: AsyncStream<SessionEvent>.Continuation?
+    nonisolated(unsafe) private var _sentTexts: [String] = []
     /// Если задана — `send(text:)` бросает эту ошибку вместо успеха.
-    var sendError: (any Error)?
+    nonisolated(unsafe) var sendError: (any Error)?
 
     // MARK: - Наблюдаемые свойства для тестов
 
