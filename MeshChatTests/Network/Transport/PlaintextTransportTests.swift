@@ -235,8 +235,8 @@ struct PlaintextTransportTests {
         let newProbe = EventProbe<ListenerEvent>(stream: newStream)
         defer { harness.listener.stop() }
 
-        // Bonjour re-registration после перезапуска может занять > 5 с (§16.3).
-        let readyEvent = try await newProbe.waitFor(timeout: .seconds(10)) {
+        // Bonjour re-registration после перезапуска может занять > 10 с (§16.3).
+        let readyEvent = try await newProbe.waitFor(timeout: .seconds(15)) {
             if case .ready = $0 { return true }; return false
         }
         guard case .ready(let newPort) = readyEvent else {
