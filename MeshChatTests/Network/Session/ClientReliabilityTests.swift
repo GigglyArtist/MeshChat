@@ -159,7 +159,8 @@ struct ClientReliabilityTests {
                                    hostPermanentPeerID: hostID, hostNickname: "Host",
                                    participants: [bobPayload])
         try await server2.send(.hostWelcome(welcome2))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        // Ждём второго .active (probe помнит все события — ищем count: 2).
+        _ = try await probe.waitFor(count: 2, timeout: .seconds(2)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
@@ -329,25 +330,23 @@ struct ClientReliabilityTests {
         try await s2.send(.hostWelcome(
             HostWelcome(status: "success", sessionID: sid,
                         hostPermanentPeerID: hostID, hostNickname: "H", participants: [])))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
-            // Второй .active.
-            let actives = probe.events.filter { if case .stateChanged(.active) = $0 { return true }; return false }
-            return actives.count >= 2
+        // Ждём второго .active.
+        _ = try await probe.waitFor(count: 2, timeout: .seconds(2)) {
+            if case .stateChanged(.active) = $0 { return true }; return false
         }
 
         // Второй разрыв → reconnecting → третий хэндшейк.
         s2.emitFailure()
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
-            let rs = probe.events.filter { if case .stateChanged(.reconnecting) = $0 { return true }; return false }
-            return rs.count >= 2
+        _ = try await probe.waitFor(count: 2, timeout: .seconds(2)) {
+            if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
         let s3 = try await waitForServer(at: 3, in: connector, timeout: .seconds(3))
         try await s3.send(.hostWelcome(
             HostWelcome(status: "success", sessionID: sid,
                         hostPermanentPeerID: hostID, hostNickname: "H", participants: [])))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
-            let actives = probe.events.filter { if case .stateChanged(.active) = $0 { return true }; return false }
-            return actives.count >= 3
+        // Ждём третьего .active.
+        _ = try await probe.waitFor(count: 3, timeout: .seconds(2)) {
+            if case .stateChanged(.active) = $0 { return true }; return false
         }
 
         // Убеждаемся, что сессия не завершилась.
