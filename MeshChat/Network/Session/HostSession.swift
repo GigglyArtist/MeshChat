@@ -26,7 +26,8 @@ actor HostSession: HostSessionManaging {
     private var state: SessionState = .connecting
     private var continuation: AsyncStream<SessionEvent>.Continuation?
 
-    /// Авторизованные участники: peerID → (соединение, профиль).
+    /// Авторизованные участники: peerID → слот. Suspended-участники занимают место
+    /// в лимите и ждут резюма до истечения reconnectGracePeriod (§9.3).
     private var participants: [UUID: ParticipantSlot] = [:]
 
     private nonisolated static let logger = Logger(
@@ -38,6 +39,17 @@ actor HostSession: HostSessionManaging {
     private struct ParticipantSlot {
         let conn: any PeerConnection
         let profile: PeerProfile
+        /// `true` пока участник временно недоступен; рассылка ему прекращена.
+        var isSuspended: Bool = false
+        /// Задача грейс-таймера (активна только пока `isSuspended`).
+        var graceTask: Task<Void, Never>?
+        /// Задача мониторинга тишины (активна пока участник не suspended).
+        var silenceTask: Task<Void, Never>?
+        /// Время последнего входящего пакета любого типа (§9.6).
+        var lastReceivedAt: ContinuousClock.Instant = ContinuousClock.now
+        /// Инкрементируется при каждом старте нового грейс-таймера;
+        /// позволяет expireGrace отвергнуть вызовы от старых задач.
+        var graceGeneration: Int = 0
     }
 
     // MARK: - Инициализация
@@ -113,7 +125,6 @@ actor HostSession: HostSessionManaging {
     private func handleIncoming(_ conn: any PeerConnection) async {
         conn.start()
 
-        // Ждать .ready и первый пакет в рамках handshakeTimeout.
         guard let hello = await waitForHello(conn: conn, timeout: config.handshakeTimeout) else {
             conn.cancel(); return
         }
@@ -142,20 +153,24 @@ actor HostSession: HostSessionManaging {
         let peerID = hello.permanentPeerID
         let profile = PeerProfile(id: peerID, nickname: normalizedNick)
 
-        // Повторный вход того же участника.
         let isRejoining: Bool
+        let isResume: Bool
         if let existing = participants[peerID] {
+            // Участник уже есть — отменяем задачи и закрываем старое соединение.
+            existing.graceTask?.cancel()
+            existing.silenceTask?.cancel()
             existing.conn.cancel()
-            participants[peerID] = ParticipantSlot(conn: conn, profile: profile)
+            isResume = existing.isSuspended
             isRejoining = true
         } else {
+            isResume = false
             guard participants.count < config.maxClients else {
                 Self.logger.info("clientHello: room is full (\(self.participants.count, privacy: .public))")
                 conn.cancel(); return
             }
-            participants[peerID] = ParticipantSlot(conn: conn, profile: profile)
             isRejoining = false
         }
+        participants[peerID] = ParticipantSlot(conn: conn, profile: profile)
 
         // Формируем список остальных участников для hostWelcome.
         let otherParticipants = participants
@@ -181,18 +196,20 @@ actor HostSession: HostSessionManaging {
         // После await: убедиться, что это соединение не было вытеснено.
         guard participants[peerID]?.conn === conn else { return }
 
-        if !isRejoining {
+        if isResume {
+            Self.logger.info("Participant \(peerID, privacy: .private) resumed session (§9.3)")
+        } else if !isRejoining {
             emit(.participantJoined(profile))
             await relay(.participantJoined(PeerPayload(profile)), excluding: peerID)
         }
 
+        startSilenceMonitor(for: peerID, conn: conn)
         await runPacketLoop(conn: conn, peerID: peerID, profile: profile)
     }
 
     // MARK: - Ожидание clientHello (с таймаутом)
 
     private func waitForHello(conn: any PeerConnection, timeout: Duration) async -> ClientHello? {
-        // Используем withTaskGroup для встроенного таймаута.
         return await withTaskGroup(of: ClientHello?.self) { group in
             group.addTask {
                 var readyReceived = false
@@ -201,17 +218,14 @@ actor HostSession: HostSessionManaging {
                     switch event {
                     case .state(.ready):
                         readyReceived = true
-                        // clientHello мог прийти раньше .ready — возвращаем его.
                         if let h = bufferedHello { return h }
                     case .state(.cancelled), .state(.failed):
                         return nil
                     case .packet(let pkt):
                         if case .clientHello(let h) = pkt {
                             if readyReceived { return h }
-                            // В фейке пакет может прийти до .ready — буферизуем.
                             bufferedHello = h
                         } else {
-                            // Любой другой пакет до хэндшейка — нарушение протокола.
                             return nil
                         }
                     case .protocolViolation:
@@ -226,40 +240,145 @@ actor HostSession: HostSessionManaging {
                 try? await Task.sleep(for: timeout)
                 return nil
             }
-            // Первый результат (хэндшейк или таймаут) определяет исход.
             let result = await group.next() ?? nil
             group.cancelAll()
             return result
         }
     }
 
+    // MARK: - Монитор тишины (§9.6)
+
+    private func startSilenceMonitor(for peerID: UUID, conn: any PeerConnection) {
+        let interval = config.heartbeatInterval
+        let silenceTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: interval) } catch { return }
+                guard !Task.isCancelled else { return }
+                await self?.checkSilence(for: peerID, conn: conn)
+            }
+        }
+        if var slot = participants[peerID], slot.conn === conn {
+            slot.silenceTask?.cancel()
+            slot.silenceTask = silenceTask
+            participants[peerID] = slot
+        }
+    }
+
+    private func checkSilence(for peerID: UUID, conn: any PeerConnection) {
+        guard let slot = participants[peerID],
+              slot.conn === conn,
+              !slot.isSuspended else { return }
+        let elapsed = ContinuousClock.now - slot.lastReceivedAt
+        guard elapsed > config.silenceTimeout else { return }
+        Self.logger.debug("Silence detected for \(peerID, privacy: .private)")
+        conn.cancel()
+        suspendParticipant(peerID, conn: conn)
+    }
+
     // MARK: - Основной цикл пакетов авторизованного клиента
 
     private func runPacketLoop(conn: any PeerConnection, peerID: UUID, profile: PeerProfile) async {
         for await event in conn.events {
-            // Перепроверяем актуальность соединения после каждого await.
             guard participants[peerID]?.conn === conn else { break }
 
             switch event {
             case .packet(let pkt):
+                // Любой входящий пакет обновляет таймер тишины (§9.6).
+                if var slot = participants[peerID], slot.conn === conn {
+                    slot.lastReceivedAt = ContinuousClock.now
+                    if slot.isSuspended {
+                        // Пакет при suspended — признак восстановления (§9.3).
+                        slot.graceTask?.cancel()
+                        slot.graceTask = nil
+                        slot.isSuspended = false
+                        participants[peerID] = slot
+                        startSilenceMonitor(for: peerID, conn: conn)
+                        Self.logger.debug("Participant \(peerID, privacy: .private) resumed via packet")
+                    } else {
+                        participants[peerID] = slot
+                    }
+                }
+                guard participants[peerID]?.conn === conn,
+                      participants[peerID]?.isSuspended == false else { break }
                 await handleAuthorizedPacket(pkt, from: peerID, conn: conn, profile: profile)
+
+            case .viability(false), .state(.waiting):
+                // Мягкий разрыв — переводим в suspended, ждём восстановления (§9.3).
+                suspendParticipant(peerID, conn: conn)
+
+            case .viability(true):
+                // Восстановление пути на том же соединении.
+                resumeViability(peerID, conn: conn)
+
             case .state(.cancelled), .state(.failed):
                 break
+
             case .protocolViolation(let e):
                 Self.logger.info("Protocol violation from \(peerID, privacy: .private): \(e, privacy: .public)")
                 conn.cancel()
+
             default:
                 break
             }
         }
 
-        // Соединение закрылось.
+        // Поток закрылся — подвешиваем участника, если ещё активен.
         guard participants[peerID]?.conn === conn else { return }
-        participants.removeValue(forKey: peerID)
-        emit(.participantLeft(profile, .connectionLost))
-        await relay(.participantLeft(ParticipantLeftPayload(peerID: peerID, reason: .connectionLost)),
-                    excluding: peerID)
+        suspendParticipant(peerID, conn: conn)
     }
+
+    // MARK: - Подвеска / возобновление (§9.3)
+
+    private func suspendParticipant(_ peerID: UUID, conn: any PeerConnection) {
+        guard var slot = participants[peerID],
+              slot.conn === conn,
+              !slot.isSuspended else { return }
+        slot.isSuspended = true
+        slot.silenceTask?.cancel()
+        slot.silenceTask = nil
+        slot.graceTask?.cancel()
+        slot.graceGeneration += 1
+        let gen = slot.graceGeneration
+        let gracePeriod = config.reconnectGracePeriod
+        slot.graceTask = Task { [weak self] in
+            do { try await Task.sleep(for: gracePeriod) } catch { return }
+            await self?.expireGrace(for: peerID, conn: conn, generation: gen)
+        }
+        participants[peerID] = slot
+        Self.logger.debug("Participant \(peerID, privacy: .private) suspended")
+    }
+
+    /// Восстанавливает участника по сигналу `viability(true)` (соединение то же).
+    private func resumeViability(_ peerID: UUID, conn: any PeerConnection) {
+        guard var slot = participants[peerID],
+              slot.conn === conn,
+              slot.isSuspended else { return }
+        slot.graceTask?.cancel()
+        slot.graceTask = nil
+        slot.isSuspended = false
+        slot.lastReceivedAt = ContinuousClock.now
+        participants[peerID] = slot
+        startSilenceMonitor(for: peerID, conn: conn)
+        Self.logger.debug("Participant \(peerID, privacy: .private) resumed via viability")
+    }
+
+    private func expireGrace(for peerID: UUID, conn: any PeerConnection, generation: Int) {
+        guard let slot = participants[peerID],
+              slot.conn === conn,
+              slot.isSuspended,
+              slot.graceGeneration == generation else { return }
+        participants.removeValue(forKey: peerID)
+        emit(.participantLeft(slot.profile, .connectionLost))
+        Task { [weak self] in
+            await self?.relay(
+                .participantLeft(ParticipantLeftPayload(peerID: peerID, reason: .connectionLost)),
+                excluding: peerID
+            )
+        }
+        Self.logger.info("Grace expired for \(peerID, privacy: .private): participantLeft(.connectionLost)")
+    }
+
+    // MARK: - Обработка пакетов авторизованного клиента
 
     private func handleAuthorizedPacket(
         _ packet: Packet,
@@ -268,6 +387,14 @@ actor HostSession: HostSessionManaging {
         profile: PeerProfile
     ) async {
         switch packet {
+        case .ping(let payload):
+            // Немедленный pong; ping/pong не выдают событий наружу (§9.6).
+            do {
+                try await conn.send(.pong(payload))
+            } catch {
+                Self.logger.debug("Failed to send pong to \(peerID, privacy: .private): \(error, privacy: .public)")
+            }
+
         case .chatMessage(let msg):
             guard msg.senderID == peerID else {
                 Self.logger.info("chatMessage senderID mismatch from \(peerID, privacy: .private)")
@@ -283,7 +410,9 @@ actor HostSession: HostSessionManaging {
             await relay(packet, excluding: peerID)
 
         case .leave:
-            participants.removeValue(forKey: peerID)
+            let slot = participants.removeValue(forKey: peerID)
+            slot?.silenceTask?.cancel()
+            slot?.graceTask?.cancel()
             conn.cancel()
             emit(.participantLeft(profile, .left))
             await relay(.participantLeft(ParticipantLeftPayload(peerID: peerID, reason: .left)),
@@ -342,15 +471,19 @@ actor HostSession: HostSessionManaging {
     private func cancelAllParticipants() {
         let slots = Array(participants.values)
         participants.removeAll()
-        slots.forEach { $0.conn.cancel() }
+        for slot in slots {
+            slot.graceTask?.cancel()
+            slot.silenceTask?.cancel()
+            slot.conn.cancel()
+        }
     }
 
     // MARK: - Ретрансляция
 
-    /// Пересылает `packet` всем участникам, кроме `excludeID`. `nil` — рассылка всем.
+    /// Пересылает `packet` всем **активным** (не suspended) участникам, кроме `excludeID`.
     private func relay(_ packet: Packet, excluding excludeID: UUID?) async {
         let targets = participants
-            .filter { $0.key != excludeID }
+            .filter { $0.key != excludeID && !$0.value.isSuspended }
             .map { $0.value.conn }
         for conn in targets {
             do {
@@ -373,6 +506,6 @@ actor HostSession: HostSessionManaging {
     }
 
     private func emit(_ event: SessionEvent) {
-        continuation?.yield(event)
+        _ = continuation?.yield(event)
     }
 }

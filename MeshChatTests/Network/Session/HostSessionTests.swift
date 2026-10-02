@@ -334,12 +334,13 @@ struct HostSessionTests {
         }
     }
 
-    // MARK: 13. participantLeft при разрыве связи
+    // MARK: 13. participantLeft после истечения грейс-периода при разрыве
 
-    @Test("connection dropped → participantLeft(.connectionLost)")
+    @Test("connection dropped → participantLeft(.connectionLost) after grace period")
     func participantLeft_connectionLost() async throws {
         let secret = makeSecret()
-        let (session, listener) = makeSession(secret: secret)
+        // Короткий грейс-период (1,5 с) для ускорения теста; упрощение §9.3 снято в этапе 8a.
+        let (session, listener) = makeSession(secret: secret, configuration: .reliabilityShortGrace)
         let sessionProbe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitReady()
@@ -350,10 +351,11 @@ struct HostSessionTests {
         let (_, clientProbe) = try await playClient(connection: clientConn,
                                                     identity: clientIdentity, secret: secret)
 
-        // Симулируем разрыв: clientConn.emitFailure() → also cancels serverConn peer end.
+        // Симулируем разрыв соединения → участник переходит в suspended.
         clientConn.emitFailure()
 
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        // participantLeft(.connectionLost) приходит после reconnectGracePeriod (§9.3).
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .participantLeft(let p, let r) = $0 {
                 return p.id == clientIdentity.peerID && r == .connectionLost
             }
