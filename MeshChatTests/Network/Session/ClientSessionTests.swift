@@ -233,13 +233,16 @@ struct ClientSessionTests {
 
     @Test("connection dropped after active → ended(.hostLost)")
     func hostLostAfterActive() async throws {
-        let (session, _, connector) = makeSession()
+        // Short grace (1,5 с) + unreachable reconnect → ended(.hostLost) быстро (§9.2).
+        let (session, _, connector) = makeSession(configuration: .reliabilityShortGrace)
         let probe = EventProbe<SessionEvent>(stream: session.events)
         let serverConn = try await handshake(session: session, connector: connector, probe: probe)
 
+        // Переключаем на unreachable до разрыва, чтобы попытки переподключения истекали.
+        connector.setMode(.unreachable)
         serverConn.emitFailure()
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.hostLost)) = $0 { return true }; return false
         }
     }
