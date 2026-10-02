@@ -18,6 +18,8 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
     // weak reference предотвращает retain-цикл между парой
     private weak var _peer: FakePeerConnection?
     private let startReady: Bool
+    /// Обрыв провода (§9.6): `true` — пакеты не доставляются, состояние остаётся `.ready`.
+    private var _severed: Bool = false
 
     /// Все пакеты, отправленные через `send(_:)`.
     nonisolated var sentPackets: [Packet] { lock.withLock { _sentPackets } }
@@ -50,8 +52,11 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
     }
 
     nonisolated func send(_ packet: Packet) async throws {
-        lock.withLock { _sentPackets.append(packet) }
-        peer?.emit(.packet(packet))
+        let deliver: Bool = lock.withLock {
+            _sentPackets.append(packet)
+            return !_severed
+        }
+        if deliver { peer?.emit(.packet(packet)) }
     }
 
     nonisolated func cancel() {
@@ -63,6 +68,13 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
     }
 
     // MARK: - Вспомогательные методы для тестов
+
+    /// «Обрыв провода»: оба конца остаются в `.ready`, `send` успешно записывает пакет,
+    /// но доставки на другой конец не происходит — так моделируется тишина (§9.6).
+    nonisolated func sever() {
+        markSevered()
+        peer?.markSevered()
+    }
 
     /// Отправляет произвольное событие в поток этого конца.
     nonisolated func emit(_ event: ConnectionEvent) {
@@ -82,6 +94,10 @@ final class FakePeerConnection: PeerConnection, @unchecked Sendable {
     }
 
     // MARK: - Приватные хелперы
+
+    nonisolated private func markSevered() {
+        lock.withLock { _severed = true }
+    }
 
     nonisolated private func closeStream() {
         lock.withLock { continuation?.finish(); continuation = nil }

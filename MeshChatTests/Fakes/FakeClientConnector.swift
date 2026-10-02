@@ -4,6 +4,14 @@
 import Foundation
 @testable import MeshChat
 
+/// Режим работы `FakeClientConnector` (§9.6).
+enum ConnectionMode {
+    /// Каждое новое соединение переходит в `.ready` при `start()`.
+    case reachable
+    /// Новые соединения никогда не переходят в `.ready` (хост недоступен).
+    case unreachable
+}
+
 /// Фейковый клиентский коннектор для юнит-тестов сессий (§7.8).
 ///
 /// При `makeConnection` создаёт пару `FakePeerConnection`: клиентский конец возвращает
@@ -13,10 +21,8 @@ import Foundation
 final class FakeClientConnector: ClientConnecting, @unchecked Sendable {
 
     private let listener: FakeHostListener
-    /// Если `true`, созданные соединения **никогда** не переходят в `.ready`.
-    private let neverReady: Bool
-
     private let lock = NSLock()
+    private var _mode: ConnectionMode
     /// Клиентские концы пар в порядке создания.
     private var _clientConnections: [FakePeerConnection] = []
     /// Серверные концы пар в порядке создания.
@@ -26,19 +32,32 @@ final class FakeClientConnector: ClientConnecting, @unchecked Sendable {
     var clientConnections: [FakePeerConnection] { lock.withLock { _clientConnections } }
     /// Все серверные концы пар в порядке вызовов `makeConnection`.
     var serverConnections: [FakePeerConnection] { lock.withLock { _serverConnections } }
+    /// Число созданных соединений.
+    var connectionCount: Int { lock.withLock { _clientConnections.count } }
 
     /// - Parameters:
     ///   - listener: связанный `FakeHostListener`, которому передаётся серверный конец пары.
-    ///   - neverReady: если `true`, `start()` не эмитит `.ready`.
-    init(listener: FakeHostListener, neverReady: Bool = false) {
+    ///   - mode: начальный режим; по умолчанию `.reachable`.
+    init(listener: FakeHostListener, mode: ConnectionMode = .reachable) {
         self.listener = listener
-        self.neverReady = neverReady
+        self._mode = mode
+    }
+
+    /// Переключает режим во время теста (например, с `.reachable` на `.unreachable`).
+    func setMode(_ mode: ConnectionMode) {
+        lock.withLock { _mode = mode }
     }
 
     // MARK: - ClientConnecting
 
     nonisolated func makeConnection(serviceName: String, security: ChannelSecurity) -> any PeerConnection {
-        let (client, server) = FakePeerConnection.makePair(startReady: !neverReady)
+        let startReady: Bool = lock.withLock {
+            switch _mode {
+            case .reachable: return true
+            case .unreachable: return false
+            }
+        }
+        let (client, server) = FakePeerConnection.makePair(startReady: startReady)
         lock.withLock {
             _clientConnections.append(client)
             _serverConnections.append(server)

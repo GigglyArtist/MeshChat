@@ -33,13 +33,13 @@ struct ClientSessionTests {
     func makeSession(
         identity: LocalIdentity = .makeTest(),
         secret: (any RoomSecret)? = nil,
-        neverReady: Bool = false,
+        mode: ConnectionMode = .reachable,
         configuration: NetworkConfiguration = .loopback
     ) -> (ClientSession, FakeHostListener, FakeClientConnector) {
         let s = secret ?? makeSecret()
         let invite = makeInvite(secret: s)
         let listener = FakeHostListener()
-        let connector = FakeClientConnector(listener: listener, neverReady: neverReady)
+        let connector = FakeClientConnector(listener: listener, mode: mode)
         let session = ClientSession(identity: identity, invite: invite, secret: s,
                                     connector: connector, configuration: configuration)
         return (session, listener, connector)
@@ -88,7 +88,7 @@ struct ClientSessionTests {
 
     @Test("connect timeout → ended(.hostUnreachable)")
     func connectTimeout() async throws {
-        let (session, _, _) = makeSession(neverReady: true, configuration: .test)
+        let (session, _, _) = makeSession(mode: .unreachable, configuration: .test)
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
 
@@ -101,7 +101,7 @@ struct ClientSessionTests {
 
     @Test("localNetworkDenied → ended(.localNetworkDenied)")
     func localNetworkDenied() async throws {
-        let (session, _, connector) = makeSession(neverReady: true)
+        let (session, _, connector) = makeSession(mode: .unreachable)
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
 
