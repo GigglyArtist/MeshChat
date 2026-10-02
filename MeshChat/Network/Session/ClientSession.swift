@@ -117,6 +117,8 @@ actor ClientSession: ChatSessionManaging {
                 transition(to: .ended(.rejected)); return
             }
 
+            // Welcome доказывает присутствие хоста — сбрасываем счётчик тишины.
+            lastReceivedAt = ContinuousClock.now
             currentSessionID = w.sessionID
             let hostProfile = PeerProfile(id: w.hostPermanentPeerID, nickname: w.hostNickname)
             storedHostProfile = hostProfile
@@ -297,7 +299,8 @@ actor ClientSession: ChatSessionManaging {
                     conn.cancel(); return
                 }
 
-                // Успешное резюме.
+                // Успешное резюме. Welcome доказывает присутствие хоста.
+                lastReceivedAt = ContinuousClock.now
                 reconnectDeadline = nil
                 reconcileParticipants(from: w)
                 transition(to: .active)
