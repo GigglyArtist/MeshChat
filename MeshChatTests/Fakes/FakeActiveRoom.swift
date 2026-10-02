@@ -18,13 +18,13 @@ final class FakeActiveRoom: ActiveRoomHandling, @unchecked Sendable {
 
     // MARK: - Внутреннее состояние (защищены NSLock)
 
+    // NSLock обеспечивает взаимоисключение при доступе из параллельных тестов.
     private let lock = NSLock()
-    // nonisolated(unsafe): доступ только через lock — NSLock обеспечивает взаимоисключение.
-    nonisolated(unsafe) private var continuation: AsyncStream<RoomEvent>.Continuation?
-    nonisolated(unsafe) private var _sentTexts: [String] = []
-    nonisolated(unsafe) private var _leaveCount: Int = 0
+    private var continuation: AsyncStream<RoomEvent>.Continuation?
+    private var _sentTexts: [String] = []
+    private var _leaveCount: Int = 0
     /// Если задана — `send(text:)` бросает эту ошибку вместо успеха.
-    nonisolated(unsafe) var sendError: (any Error)?
+    var sendError: (any Error)?
 
     // MARK: - Наблюдаемые свойства для тестов
 
@@ -48,7 +48,7 @@ final class FakeActiveRoom: ActiveRoomHandling, @unchecked Sendable {
 
     /// Отправляет событие в поток.
     func emit(_ event: RoomEvent) {
-        lock.withLock { continuation?.yield(event) }
+        lock.withLock { _ = continuation?.yield(event) }
     }
 
     /// Завершает поток событий.

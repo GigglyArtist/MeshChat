@@ -22,12 +22,12 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
 
     // MARK: - Внутреннее состояние (защищены NSLock)
 
+    // NSLock обеспечивает взаимоисключение при доступе из параллельных тестов.
     private let lock = NSLock()
-    // nonisolated(unsafe): доступ только через lock — NSLock обеспечивает взаимоисключение.
-    nonisolated(unsafe) private var continuation: AsyncStream<SessionEvent>.Continuation?
-    nonisolated(unsafe) private var _sentTexts: [String] = []
+    private var continuation: AsyncStream<SessionEvent>.Continuation?
+    private var _sentTexts: [String] = []
     /// Если задана — `send(text:)` бросает эту ошибку вместо успеха.
-    nonisolated(unsafe) var sendError: (any Error)?
+    var sendError: (any Error)?
 
     // MARK: - Наблюдаемые свойства для тестов
 
@@ -54,7 +54,7 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
 
     /// Отправляет событие в поток.
     func emit(_ event: SessionEvent) {
-        lock.withLock { continuation?.yield(event) }
+        lock.withLock { _ = continuation?.yield(event) }
     }
 
     /// Завершает поток событий (имитирует конец сессии).
