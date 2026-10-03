@@ -216,4 +216,13 @@ struct ChatViewModelTests {
         await vm.leave()
         #expect(room.leaveCount == 1)
     }
+
+    // MARK: 9. appDidBecomeActive() — форвардирует в room
+
+    @Test("appDidBecomeActive() forwards to room.appDidBecomeActive()")
+    func appDidBecomeActiveForwards() async {
+        let (vm, room) = makeViewModel()
+        await vm.appDidBecomeActive()
+        #expect(room.appDidBecomeActiveCount == 1)
+    }
 }

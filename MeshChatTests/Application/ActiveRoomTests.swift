@@ -216,4 +216,16 @@ struct ActiveRoomTests {
         }
         #expect(changes.count == 1, "second start() must not create a second event loop")
     }
+
+    // MARK: N. appDidBecomeActive → session.resumeAfterForeground()
+
+    @Test("appDidBecomeActive() forwards to session.resumeAfterForeground()")
+    func appDidBecomeActiveForwardsToSession() async throws {
+        let storage = try makeStorage()
+        let (room, session) = makeRoom(storage: storage)
+        await room.start()
+
+        await room.appDidBecomeActive()
+        #expect(session.resumeAfterForegroundCount == 1)
+    }
 }

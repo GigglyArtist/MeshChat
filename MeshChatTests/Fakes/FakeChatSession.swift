@@ -27,6 +27,7 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
     // nonisolated(unsafe): доступ из nonisolated-методов, безопасность гарантирует lock.
     nonisolated(unsafe) private var continuation: AsyncStream<SessionEvent>.Continuation?
     nonisolated(unsafe) private var _sentTexts: [String] = []
+    nonisolated(unsafe) private var _resumeAfterForegroundCount: Int = 0
     /// Если задана — `send(text:)` бросает эту ошибку вместо успеха.
     // nonisolated(unsafe): доступ из nonisolated-методов, безопасность гарантирует lock.
     nonisolated(unsafe) var sendError: (any Error)?
@@ -34,6 +35,7 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
     // MARK: - Наблюдаемые свойства для тестов
 
     var sentTexts: [String] { lock.withLock { _sentTexts } }
+    var resumeAfterForegroundCount: Int { lock.withLock { _resumeAfterForegroundCount } }
 
     // MARK: - Инициализация
 
@@ -83,5 +85,7 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
         lock.withLock { continuation?.finish(); continuation = nil }
     }
 
-    nonisolated func resumeAfterForeground() async {}
+    nonisolated func resumeAfterForeground() async {
+        lock.withLock { _resumeAfterForegroundCount += 1 }
+    }
 }
