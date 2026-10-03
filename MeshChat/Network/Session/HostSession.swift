@@ -25,6 +25,8 @@ actor HostSession: HostSessionManaging {
 
     private var state: SessionState = .connecting
     private var continuation: AsyncStream<SessionEvent>.Continuation?
+    /// Фоновая задача цикла перезапуска listener'а (ADR-11).
+    private var listenerRestartTask: Task<Void, Never>?
 
     /// Авторизованные участники: peerID → слот. Suspended-участники занимают место
     /// в лимите и ждут резюма до истечения reconnectGracePeriod (§9.3).
@@ -98,17 +100,38 @@ actor HostSession: HostSessionManaging {
             return
         }
 
-        // Обрабатываем события listener'а; входящие соединения запускаем параллельно.
-        for await event in listenerStream {
+        let needsRestart = await processListenerStream(listenerStream)
+        if needsRestart { startListenerRestart(skipFirstPause: false) }
+    }
+
+    // MARK: - Поток событий listener'а
+
+    /// Читает события listener'а; возвращает `true` если listener упал после `.active`
+    /// и требуется перезапуск (ADR-11).
+    private func processListenerStream(_ stream: AsyncStream<ListenerEvent>) async -> Bool {
+        var readyReceived = false
+        for await event in stream {
+            guard !Task.isCancelled else { return false }
             switch event {
             case .ready:
-                transition(to: .active)
+                readyReceived = true
+                // Переходим в .active только на первом запуске (state == .connecting).
+                if case .connecting = state { transition(to: .active) }
 
             case .failed(let issue):
-                let reason: SessionEndReason = issue == .localNetworkDenied
-                    ? .localNetworkDenied : .failed(issue.description)
-                transition(to: .ended(reason))
-                return
+                if !readyReceived {
+                    let reason: SessionEndReason = issue == .localNetworkDenied
+                        ? .localNetworkDenied : .failed(issue.description)
+                    transition(to: .ended(reason))
+                    return false
+                }
+                // Упал после активной фазы.
+                if issue == .localNetworkDenied {
+                    transition(to: .ended(.localNetworkDenied))
+                    return false
+                }
+                Self.logger.info("Listener failed after active (\(issue.description, privacy: .public)), scheduling restart")
+                return true
 
             case .incoming(let conn):
                 // Task наследует контекст актора — handleIncoming изолирована на этом акторе.
@@ -117,6 +140,45 @@ actor HostSession: HostSessionManaging {
                     await self.handleIncoming(conn)
                 }
             }
+        }
+        return false
+    }
+
+    // MARK: - Цикл перезапуска listener'а (ADR-11)
+
+    private func startListenerRestart(skipFirstPause: Bool) {
+        listenerRestartTask?.cancel()
+        listenerRestartTask = Task { [weak self] in
+            await self?.runListenerRestartLoop(skipFirstPause: skipFirstPause)
+        }
+    }
+
+    private func runListenerRestartLoop(skipFirstPause: Bool) async {
+        let policy = ReconnectPolicy(backoff: config.reconnectBackoff)
+        var attempt = 0
+        var skipPause = skipFirstPause
+        while !Task.isCancelled {
+            if !skipPause {
+                let delay = policy.delay(forAttempt: attempt)
+                do { try await Task.sleep(for: delay) } catch { return }
+            }
+            skipPause = false
+            guard !Task.isCancelled, case .active = state else { return }
+            attempt += 1
+
+            let stream: AsyncStream<ListenerEvent>
+            do {
+                stream = try listener.start(
+                    serviceName: invite.serviceName,
+                    security: .tlsPSK(secret.tlsPreSharedKey)
+                )
+            } catch {
+                Self.logger.error("Listener restart start() threw: \(error, privacy: .public)")
+                continue
+            }
+
+            let needsRestart = await processListenerStream(stream)
+            if !needsRestart { return }
         }
     }
 
@@ -450,6 +512,8 @@ actor HostSession: HostSessionManaging {
 
     private func _end() async {
         guard case .active = state else { return }
+        listenerRestartTask?.cancel()
+        listenerRestartTask = nil
         transition(to: .ended(.leftByUser))
         await broadcastSessionEnded()
         try? await Task.sleep(for: config.sessionEndFlushTimeout)
