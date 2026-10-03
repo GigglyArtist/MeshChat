@@ -17,8 +17,8 @@ struct ResumeAfterForegroundTests {
         try! RoomCredentials(roomKeyData: Data(repeating: 0xCD, count: 32))
     }
 
-    /// Конфигурация с большим backoff: гарантирует, что без `resumeAfterForeground()`
-    /// второй запуск listener'а / переподключение заняли бы 30 секунд.
+    /// Конфигурация для хоста: большой backoff перезапуска listener'а.
+    /// `silenceTimeout` длинный, чтобы ClientSession не мешал работе хостовых тестов.
     var longBackoffConfig: NetworkConfiguration {
         NetworkConfiguration(
             serviceType: "_meshchat._tcp",
@@ -27,6 +27,24 @@ struct ResumeAfterForegroundTests {
             handshakeTimeout: .seconds(2),
             heartbeatInterval: .seconds(60),
             silenceTimeout: .seconds(60),
+            reconnectGracePeriod: .seconds(60),
+            reconnectBackoff: [.seconds(30)],
+            sessionEndFlushTimeout: .milliseconds(100)
+        )
+    }
+
+    /// Конфигурация для клиента: короткий heartbeat/silence (быстро вызывает .reconnecting)
+    /// + длинный backoff (30 с), чтобы `resumeAfterForeground()` имело смысл.
+    /// heartbeatInterval=200ms → первый heartbeat отправляется быстро;
+    /// silenceTimeout=400ms → при отсутствии ответа .reconnecting наступает за ~600ms.
+    var clientReconnectConfig: NetworkConfiguration {
+        NetworkConfiguration(
+            serviceType: "_meshchat._tcp",
+            maxClients: 4,
+            connectTimeout: .seconds(2),
+            handshakeTimeout: .seconds(2),
+            heartbeatInterval: .milliseconds(200),
+            silenceTimeout: .milliseconds(400),
             reconnectGracePeriod: .seconds(60),
             reconnectBackoff: [.seconds(30)],
             sessionEndFlushTimeout: .milliseconds(100)
@@ -54,8 +72,12 @@ struct ResumeAfterForegroundTests {
 
         // Listener падает → задача уходит в 30-секундный backoff
         listener.emitFailure(.other("link down"))
+        // Ждём, пока актор HostSession обработает .failed и установит listenerRestartTask.
+        // Без паузы resumeAfterForeground() может прийти к актору раньше, чем
+        // processListenerStream вернёт true и startListenerRestart будет вызван.
+        try await Task.sleep(for: .milliseconds(100))
 
-        // Немедленно вызываем resumeAfterForeground — должно пропустить паузу
+        // Вызываем resumeAfterForeground — должно пропустить паузу
         await session.resumeAfterForeground()
 
         // Второй запуск listener'а должен произойти быстро (без 30-секундного ожидания)
@@ -112,7 +134,10 @@ struct ResumeAfterForegroundTests {
             invite: invite,
             secret: secret,
             connector: connector,
-            configuration: longBackoffConfig
+            // Короткий silenceTimeout (500 мс): фейковый сервер не шлёт heartbeat,
+            // поэтому .reconnecting наступает быстро; backoff 30 с нужен, чтобы
+            // resumeAfterForeground() имело смысл.
+            configuration: clientReconnectConfig
         )
         let probe = EventProbe<SessionEvent>(stream: session.events)
 
@@ -126,9 +151,9 @@ struct ResumeAfterForegroundTests {
         _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
+        _ = serverConn
 
-        // Мягкий разрыв → reconnecting
-        serverConn.emit(.viability(false))
+        // Клиент шлёт heartbeat через 200 мс, фейковый сервер не отвечает → silence 400 мс → .reconnecting
         _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
