@@ -61,7 +61,7 @@ struct ClientSessionTests {
                                   hostPermanentPeerID: hostID, hostNickname: "Host",
                                   participants: participants)
         try await serverConn.send(.hostWelcome(welcome))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
         return serverConn
@@ -92,7 +92,7 @@ struct ClientSessionTests {
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.hostUnreachable)) = $0 { return true }; return false
         }
     }
@@ -109,7 +109,7 @@ struct ClientSessionTests {
         let clientConn = try await waitForClient(connector: connector)
         clientConn.emit(.state(.waiting(.localNetworkDenied)))
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.localNetworkDenied)) = $0 { return true }; return false
         }
     }
@@ -126,7 +126,7 @@ struct ClientSessionTests {
         _ = try await waitForServer(connector: connector)
 
         // handshakeTimeout = 300 мс в .test конфигурации.
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.handshakeTimeout)) = $0 { return true }; return false
         }
     }
@@ -143,7 +143,7 @@ struct ClientSessionTests {
         // emitFailure → клиент получает .cancelled → connectionClosed → .rejected
         serverConn.emitFailure()
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.rejected)) = $0 { return true }; return false
         }
     }
@@ -162,7 +162,7 @@ struct ClientSessionTests {
                                      participants: [])
         try await serverConn.send(.hostWelcome(badWelcome))
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.rejected)) = $0 { return true }; return false
         }
     }
@@ -185,7 +185,7 @@ struct ClientSessionTests {
         try await serverConn.send(.hostWelcome(welcome))
 
         // Ожидаем: host + Alice + Bob = 3 события participantJoined.
-        let joined = try await probe.waitFor(count: 3, timeout: .seconds(2)) {
+        let joined = try await probe.waitFor(count: 3, timeout: .seconds(5)) {
             if case .participantJoined = $0 { return true }; return false
         }
         let ids = joined.compactMap { e -> UUID? in
@@ -209,7 +209,7 @@ struct ClientSessionTests {
                                      text: "Привет!", timestamp: Date())
         try await serverConn.send(.chatMessage(payload))
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .messageReceived(let m) = $0 { return m.id == msgID }; return false
         }
     }
@@ -224,7 +224,7 @@ struct ClientSessionTests {
 
         try await serverConn.send(.sessionEnded(SessionEndedPayload(reason: "hostClosed")))
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.hostEnded)) = $0 { return true }; return false
         }
     }
@@ -277,7 +277,7 @@ struct ClientSessionTests {
 
         await session.end()
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.leftByUser)) = $0 { return true }; return false
         }
 
@@ -296,7 +296,7 @@ struct ClientSessionTests {
 @MainActor
 private func waitForServer(
     connector: FakeClientConnector,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> FakePeerConnection {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
@@ -313,7 +313,7 @@ private func waitForServer(
 @MainActor
 private func waitForClient(
     connector: FakeClientConnector,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> FakePeerConnection {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {

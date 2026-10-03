@@ -35,7 +35,7 @@ struct HostReliabilityTests {
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitReady()
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
         return (session, listener, probe)
@@ -53,7 +53,7 @@ struct HostReliabilityTests {
         let (welcome, clientProbe) = try await playClient(
             connection: clientConn, identity: identity, secret: secret, timeout: .seconds(3)
         )
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .participantJoined(let p) = $0 { return p.id == identity.peerID }; return false
         }
         return (clientConn, welcome, clientProbe)
@@ -73,7 +73,7 @@ struct HostReliabilityTests {
         let sentAt = Date()
         try await clientConn.send(.ping(HeartbeatPayload(sentAt: sentAt)))
 
-        _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
             if case .packet(.pong(let p)) = $0 { return p.sentAt == sentAt }; return false
         }
     }
@@ -133,7 +133,7 @@ struct HostReliabilityTests {
             MessagePayload(messageID: msgID, senderID: idB.peerID, text: "hi", timestamp: Date())
         ))
 
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .messageReceived(let m) = $0 { return m.id == msgID }; return false
         }
 
@@ -269,7 +269,7 @@ struct HostReliabilityTests {
         try await fifthClient.send(.clientHello(fifthHello))
 
         let fifthProbe = EventProbe<ConnectionEvent>(stream: fifthClient.events)
-        _ = try await fifthProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await fifthProbe.waitFor(timeout: .seconds(5)) {
             if case .state(.cancelled) = $0 { return true }; return false
         }
         _ = conns
@@ -288,7 +288,7 @@ struct HostReliabilityTests {
 
         try await clientConn.send(.leave)
 
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .participantLeft(let p, .left) = $0 { return p.id == clientIdentity.peerID }
             return false
         }

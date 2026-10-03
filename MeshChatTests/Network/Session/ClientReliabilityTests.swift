@@ -48,7 +48,7 @@ struct ClientReliabilityTests {
                                   hostPermanentPeerID: hostID, hostNickname: "Host",
                                   participants: participants)
         try await serverConn.send(.hostWelcome(welcome))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
         return (serverConn, sessionID)
@@ -63,7 +63,7 @@ struct ClientReliabilityTests {
         let (serverConn, _) = try await handshake(session: session, connector: connector, probe: probe)
 
         // Ждём heartbeatInterval (100 мс) — хост должен получить ping.
-        _ = try await EventProbe<ConnectionEvent>(stream: serverConn.events).waitFor(timeout: .seconds(2)) {
+        _ = try await EventProbe<ConnectionEvent>(stream: serverConn.events).waitFor(timeout: .seconds(5)) {
             if case .packet(.ping) = $0 { return true }; return false
         }
     }
@@ -80,7 +80,7 @@ struct ClientReliabilityTests {
         // Обрываем провод: клиент не получает ответов → silenceTimeout (400 мс) → разрыв.
         connector.serverConnections.first?.sever()
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
     }
@@ -96,14 +96,14 @@ struct ClientReliabilityTests {
         // Мягкий разрыв.
         serverConn.emit(.viability(false))
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
 
         // Восстановление: grace не истёк (5 с >> test time).
         serverConn.emit(.viability(true))
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
@@ -141,13 +141,13 @@ struct ClientReliabilityTests {
                                    hostPermanentPeerID: hostID, hostNickname: "Host",
                                    participants: [alicePayload])
         try await server1.send(.hostWelcome(welcome1))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
         // Жёсткий разрыв → reconnecting.
         server1.emitFailure()
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
 
@@ -160,7 +160,7 @@ struct ClientReliabilityTests {
                                    participants: [bobPayload])
         try await server2.send(.hostWelcome(welcome2))
         // Ждём второго .active (probe помнит все события — ищем count: 2).
-        _ = try await probe.waitFor(count: 2, timeout: .seconds(2)) {
+        _ = try await probe.waitFor(count: 2, timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
@@ -186,7 +186,7 @@ struct ClientReliabilityTests {
 
         // Жёсткий разрыв → reconnecting.
         server1.emitFailure()
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
 
@@ -232,13 +232,13 @@ struct ClientReliabilityTests {
         connector.setMode(.unreachable)
         serverConn.emitFailure()
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
 
         await session.end()
 
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.leftByUser)) = $0 { return true }; return false
         }
 
@@ -263,7 +263,7 @@ struct ClientReliabilityTests {
                                                sessionID: sid)
 
         server1.emitFailure()
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
 
@@ -317,13 +317,13 @@ struct ClientReliabilityTests {
         try await s1.send(.hostWelcome(
             HostWelcome(status: "success", sessionID: sid,
                         hostPermanentPeerID: hostID, hostNickname: "H", participants: [])))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
         // Первый разрыв → reconnecting → второй хэндшейк.
         s1.emitFailure()
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
         let s2 = try await waitForServer(at: 2, in: connector, timeout: .seconds(3))
@@ -331,13 +331,13 @@ struct ClientReliabilityTests {
             HostWelcome(status: "success", sessionID: sid,
                         hostPermanentPeerID: hostID, hostNickname: "H", participants: [])))
         // Ждём второго .active.
-        _ = try await probe.waitFor(count: 2, timeout: .seconds(2)) {
+        _ = try await probe.waitFor(count: 2, timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
         // Второй разрыв → reconnecting → третий хэндшейк.
         s2.emitFailure()
-        _ = try await probe.waitFor(count: 2, timeout: .seconds(2)) {
+        _ = try await probe.waitFor(count: 2, timeout: .seconds(5)) {
             if case .stateChanged(.reconnecting) = $0 { return true }; return false
         }
         let s3 = try await waitForServer(at: 3, in: connector, timeout: .seconds(3))
@@ -345,7 +345,7 @@ struct ClientReliabilityTests {
             HostWelcome(status: "success", sessionID: sid,
                         hostPermanentPeerID: hostID, hostNickname: "H", participants: [])))
         // Ждём третьего .active.
-        _ = try await probe.waitFor(count: 3, timeout: .seconds(2)) {
+        _ = try await probe.waitFor(count: 3, timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 

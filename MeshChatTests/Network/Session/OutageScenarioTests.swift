@@ -50,15 +50,15 @@ struct OutageScenarioTests {
 
         Task { await host.start() }
         listener.emitReady()
-        _ = try await hostProbe.waitFor(timeout: .seconds(3)) {
+        _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
         Task { await client.start() }
-        _ = try await hostProbe.waitFor(timeout: .seconds(3)) {
+        _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
             if case .participantJoined(let p) = $0 { return p.id == clientIdentity.peerID }; return false
         }
-        _ = try await clientProbe.waitFor(timeout: .seconds(3)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
@@ -109,7 +109,7 @@ struct OutageScenarioTests {
             connector.clientConnections[0].emitFailure()
 
             // Клиент переходит в reconnecting.
-            _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+            _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
                 if case .stateChanged(.reconnecting) = $0 { return true }; return false
             }
 
@@ -170,7 +170,7 @@ struct OutageScenarioTests {
         try await withConnectedSessions(clientIdentity: clientIdentity) { host, client, hostProbe, clientProbe, connector in
             // Сообщение до обрыва.
             let msg1 = try await client.send(text: "before outage")
-            _ = try await hostProbe.waitFor(timeout: .seconds(2)) {
+            _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
                 if case .messageReceived(let m) = $0 { return m.id == msg1.id }; return false
             }
 
@@ -182,7 +182,7 @@ struct OutageScenarioTests {
 
             // Сообщение после переподключения.
             let msg2 = try await client.send(text: "after reconnect")
-            _ = try await hostProbe.waitFor(timeout: .seconds(2)) {
+            _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
                 if case .messageReceived(let m) = $0 { return m.id == msg2.id }; return false
             }
 

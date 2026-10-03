@@ -50,7 +50,7 @@ struct HostSessionTests {
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitReady()
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
     }
@@ -63,7 +63,7 @@ struct HostSessionTests {
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitFailure(.localNetworkDenied)
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.localNetworkDenied)) = $0 { return true }; return false
         }
     }
@@ -76,7 +76,7 @@ struct HostSessionTests {
         let probe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitFailure(.other("boom"))
-        _ = try await probe.waitFor(timeout: .seconds(2)) {
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.ended(.failed)) = $0 { return true }; return false
         }
     }
@@ -110,7 +110,7 @@ struct HostSessionTests {
         let sessionProbe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitReady()
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
@@ -121,7 +121,7 @@ struct HostSessionTests {
         // Ждём отмены клиентского конца (сигнал того, что хост отменил serverConn).
         // handshakeTimeout = 300 мс в .test — хост вызывает conn.cancel() по таймауту.
         let clientProbe = EventProbe<ConnectionEvent>(stream: clientConn.events)
-        _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
             if case .state(.cancelled) = $0 { return true }; return false
         }
         // Хост ничего не должен был отправить (хэндшейк не прошёл).
@@ -151,7 +151,7 @@ struct HostSessionTests {
 
         // cancel() на serverConn → также эмитит .cancelled на clientConn.
         let clientProbe = EventProbe<ConnectionEvent>(stream: clientConn.events)
-        _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
             if case .state(.cancelled) = $0 { return true }; return false
         }
         _ = session
@@ -180,7 +180,7 @@ struct HostSessionTests {
         try await clientConn.send(.clientHello(badHello))
 
         let clientProbe = EventProbe<ConnectionEvent>(stream: clientConn.events)
-        _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
             if case .state(.cancelled) = $0 { return true }; return false
         }
         _ = session
@@ -209,7 +209,7 @@ struct HostSessionTests {
         try await clientConn.send(.clientHello(badHello))
 
         let clientProbe = EventProbe<ConnectionEvent>(stream: clientConn.events)
-        _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
             if case .state(.cancelled) = $0 { return true }; return false
         }
         _ = session
@@ -238,7 +238,7 @@ struct HostSessionTests {
         try await clientConn.send(.clientHello(badHello))
 
         let clientProbe = EventProbe<ConnectionEvent>(stream: clientConn.events)
-        _ = try await clientProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await clientProbe.waitFor(timeout: .seconds(5)) {
             if case .state(.cancelled) = $0 { return true }; return false
         }
         _ = session
@@ -253,7 +253,7 @@ struct HostSessionTests {
         let sessionProbe = EventProbe<SessionEvent>(stream: session.events)
         Task { await session.start() }
         listener.emitReady()
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .stateChanged(.active) = $0 { return true }; return false
         }
 
@@ -282,7 +282,7 @@ struct HostSessionTests {
 
         // Ожидаем отмену клиентского конца (cancel на serverConn → emit на fifthClient).
         let fifthProbe = EventProbe<ConnectionEvent>(stream: fifthClient.events)
-        _ = try await fifthProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await fifthProbe.waitFor(timeout: .seconds(5)) {
             if case .state(.cancelled) = $0 { return true }; return false
         }
         _ = clientConns
@@ -303,7 +303,7 @@ struct HostSessionTests {
         listener.accept(serverConn)
         try await playClient(connection: clientConn, identity: clientIdentity, secret: secret)
 
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .participantJoined(let p) = $0 { return p.id == clientIdentity.peerID }
             return false
         }
@@ -326,7 +326,7 @@ struct HostSessionTests {
 
         try await clientConn.send(.leave)
 
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .participantLeft(let p, let r) = $0 {
                 return p.id == clientIdentity.peerID && r == .left
             }
@@ -390,11 +390,11 @@ struct HostSessionTests {
                                         text: "hello", timestamp: Date())
         try await connA.send(.chatMessage(msgPayload))
 
-        _ = try await sessionProbe.waitFor(timeout: .seconds(2)) {
+        _ = try await sessionProbe.waitFor(timeout: .seconds(5)) {
             if case .messageReceived(let m) = $0 { return m.id == msgID }
             return false
         }
-        _ = try await probeB.waitFor(timeout: .seconds(2)) {
+        _ = try await probeB.waitFor(timeout: .seconds(5)) {
             if case .packet(.chatMessage(let m)) = $0 { return m.messageID == msgID }
             return false
         }

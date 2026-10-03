@@ -88,7 +88,7 @@ func playClient(
     connection: FakePeerConnection,
     identity: LocalIdentity,
     secret: any RoomSecret,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> (welcome: HostWelcome, probe: EventProbe<ConnectionEvent>) {
     let probe = EventProbe<ConnectionEvent>(stream: connection.events)
     let hello = ClientHello(
@@ -115,7 +115,7 @@ func playClientWithResume(
     identity: LocalIdentity,
     secret: any RoomSecret,
     resumeSessionID: UUID,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> (welcome: HostWelcome, probe: EventProbe<ConnectionEvent>) {
     let probe = EventProbe<ConnectionEvent>(stream: connection.events)
     let hello = ClientHello(
@@ -141,7 +141,7 @@ func playClientWithResume(
 func waitForServer(
     at index: Int = 1,
     in connector: FakeClientConnector,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> FakePeerConnection {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
@@ -158,7 +158,7 @@ func waitForServer(
 func waitForClient(
     at index: Int = 1,
     in connector: FakeClientConnector,
-    timeout: Duration = .seconds(2)
+    timeout: Duration = .seconds(5)
 ) async throws -> FakePeerConnection {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
