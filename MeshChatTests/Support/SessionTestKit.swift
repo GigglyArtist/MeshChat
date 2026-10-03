@@ -49,6 +49,21 @@ extension NetworkConfiguration {
         sessionEndFlushTimeout: .milliseconds(100)
     )
 
+    /// Конфигурация для тестов перезапуска listener'а (ADR-11).
+    ///
+    /// Короткий `reconnectBackoff` [50, 100 мс] для быстрого перезапуска.
+    static let listenerRestart = NetworkConfiguration(
+        serviceType: "_meshchat._tcp",
+        maxClients: 4,
+        connectTimeout: .seconds(2),
+        handshakeTimeout: .seconds(2),
+        heartbeatInterval: .seconds(60),
+        silenceTimeout: .seconds(60),
+        reconnectGracePeriod: .seconds(60),
+        reconnectBackoff: [.milliseconds(50), .milliseconds(100)],
+        sessionEndFlushTimeout: .milliseconds(100)
+    )
+
     /// Конфигурация для тестов истечения грейс-периода (§9.6).
     ///
     /// Идентична `.reliability`, но `reconnectGracePeriod` сокращён до 1,5 с.
