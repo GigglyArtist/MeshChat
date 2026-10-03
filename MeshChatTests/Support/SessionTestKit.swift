@@ -273,4 +273,55 @@ struct SessionTestKitSelfTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(!probe.events.contains { if case .state(.ready) = $0 { return true }; return false })
     }
+
+    @Test("FakeHostListener restart: start → emitFailure → start → emitReady gives two streams, startCount == 2")
+    func fakeListenerRestart() async throws {
+        let listener = FakeHostListener()
+
+        // Первый запуск — эмитим failure
+        let stream1 = try listener.start(serviceName: "room-A", security: .plaintext)
+        let probe1 = EventProbe<ListenerEvent>(stream: stream1)
+        listener.emitFailure(.other("link down"))
+        try await probe1.waitForFinish(timeout: .seconds(1))
+        #expect(probe1.events.contains { if case .failed = $0 { return true }; return false })
+
+        // Второй запуск — эмитим ready
+        let stream2 = try listener.start(serviceName: "room-A", security: .plaintext)
+        let probe2 = EventProbe<ListenerEvent>(stream: stream2)
+        listener.emitReady(port: 5555)
+        let readyEvent = try await probe2.waitFor(timeout: .seconds(1)) {
+            if case .ready = $0 { return true }; return false
+        }
+        guard case .ready(let port) = readyEvent else { Issue.record("expected .ready"); return }
+        #expect(port == 5555)
+
+        #expect(listener.startCount == 2)
+        #expect(listener.stopCount == 0)
+    }
+
+    @Test("FakeHostListener setNextStartThrows: second start throws, third succeeds")
+    func fakeListenerThrowsOnce() async throws {
+        let listener = FakeHostListener()
+
+        // Первый запуск нормальный
+        let stream1 = try listener.start(serviceName: "room-B", security: .plaintext)
+        listener.emitFailure()
+        let probe1 = EventProbe<ListenerEvent>(stream: stream1)
+        try await probe1.waitForFinish(timeout: .seconds(1))
+
+        // Второй должен бросить
+        listener.setNextStartThrows()
+        #expect(throws: FakeListenerError.simulatedStartFailure) {
+            try listener.start(serviceName: "room-B", security: .plaintext)
+        }
+        // startCount не увеличился
+        #expect(listener.startCount == 1)
+
+        // Третий нормальный
+        let stream3 = try listener.start(serviceName: "room-B", security: .plaintext)
+        #expect(listener.startCount == 2)
+        let probe3 = EventProbe<ListenerEvent>(stream: stream3)
+        listener.emitReady()
+        _ = try await probe3.waitFor(timeout: .seconds(1)) { if case .ready = $0 { return true }; return false }
+    }
 }

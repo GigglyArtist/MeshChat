@@ -6,37 +6,57 @@ import Foundation
 
 /// Фейковый listener для юнит-тестов сессий (§7.8).
 ///
-/// События, эмитированные до вызова `start()`, буферизуются и доставляются
-/// сразу после того, как сессия вызовет `start()` и установит continuation.
-///
+/// Поддерживает многократный вызов `start()` — каждый создаёт новый поток событий.
 /// Все мутируемые поля защищены `NSLock` — отсюда `@unchecked Sendable`.
 final class FakeHostListener: HostListening, @unchecked Sendable {
+
+    // MARK: - Внутреннее состояние
 
     private let lock = NSLock()
     private var continuation: AsyncStream<ListenerEvent>.Continuation?
     private var pendingEvents: [ListenerEvent] = []
-    private var _stopCalled = false
-    private var _lastServiceName: String?
-    private var _lastSecurity: ChannelSecurity?
 
-    /// Был ли вызван `stop()`.
-    nonisolated var stopCalled: Bool { lock.withLock { _stopCalled } }
+    private var _startCount: Int = 0
+    private var _stopCount: Int = 0
+    private var _serviceNameHistory: [String] = []
+    private var _securityHistory: [ChannelSecurity] = []
+    private var _nextStartThrows: Bool = false
+
+    // MARK: - Наблюдаемые свойства для тестов
+
+    /// Количество успешных вызовов `start()`.
+    nonisolated var startCount: Int { lock.withLock { _startCount } }
+    /// Количество вызовов `stop()`.
+    nonisolated var stopCount: Int { lock.withLock { _stopCount } }
     /// Имя сервиса последнего вызова `start`.
-    nonisolated var lastServiceName: String? { lock.withLock { _lastServiceName } }
+    nonisolated var lastServiceName: String? { lock.withLock { _serviceNameHistory.last } }
     /// Параметры безопасности последнего вызова `start`.
-    nonisolated var lastSecurity: ChannelSecurity? { lock.withLock { _lastSecurity } }
+    nonisolated var lastSecurity: ChannelSecurity? { lock.withLock { _securityHistory.last } }
+    /// История имён сервиса по всем вызовам `start`.
+    nonisolated var serviceNameHistory: [String] { lock.withLock { _serviceNameHistory } }
+    /// История параметров безопасности по всем вызовам `start`.
+    nonisolated var securityHistory: [ChannelSecurity] { lock.withLock { _securityHistory } }
+    /// Обратная совместимость.
+    nonisolated var stopCalled: Bool { lock.withLock { _stopCount > 0 } }
 
     // MARK: - HostListening
 
     nonisolated func start(serviceName: String, security: ChannelSecurity) throws -> AsyncStream<ListenerEvent> {
+        // Следующий start бросает ошибку (режим для тестов повторных попыток).
+        let shouldThrow = lock.withLock { () -> Bool in
+            if _nextStartThrows { _nextStartThrows = false; return true }
+            return false
+        }
+        if shouldThrow { throw FakeListenerError.simulatedStartFailure }
+
         var cont: AsyncStream<ListenerEvent>.Continuation!
         let stream = AsyncStream<ListenerEvent> { cont = $0 }
-        // Сохраняем continuation и воспроизводим буферизованные события.
+
         let buffered = lock.withLock { () -> [ListenerEvent] in
             continuation = cont
-            _lastServiceName = serviceName
-            _lastSecurity = security
-            _stopCalled = false
+            _serviceNameHistory.append(serviceName)
+            _securityHistory.append(security)
+            _startCount += 1
             let b = pendingEvents
             pendingEvents.removeAll()
             return b
@@ -49,7 +69,7 @@ final class FakeHostListener: HostListening, @unchecked Sendable {
 
     nonisolated func stop() {
         let cont = lock.withLock { () -> AsyncStream<ListenerEvent>.Continuation? in
-            _stopCalled = true
+            _stopCount += 1
             let c = continuation
             continuation = nil
             return c
@@ -58,6 +78,11 @@ final class FakeHostListener: HostListening, @unchecked Sendable {
     }
 
     // MARK: - Вспомогательные методы для тестов
+
+    /// Следующий вызов `start()` бросит `FakeListenerError.simulatedStartFailure`.
+    nonisolated func setNextStartThrows() {
+        lock.withLock { _nextStartThrows = true }
+    }
 
     /// Эмитит `.ready(port:)`. Если `start()` ещё не вызван — буферизует событие.
     nonisolated func emitReady(port: UInt16 = 0) {
@@ -97,4 +122,10 @@ final class FakeHostListener: HostListening, @unchecked Sendable {
             }
         }
     }
+}
+
+// MARK: - Ошибки фейка
+
+enum FakeListenerError: Error, Equatable {
+    case simulatedStartFailure
 }
