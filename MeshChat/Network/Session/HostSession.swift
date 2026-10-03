@@ -84,6 +84,7 @@ actor HostSession: HostSessionManaging {
     nonisolated func start() async { await _start() }
     nonisolated func send(text: String) async throws -> ChatMessage { try await _send(text: text) }
     nonisolated func end() async { await _end() }
+    nonisolated func resumeAfterForeground() async { await _resumeAfterForeground() }
 
     // MARK: - Запуск
 
@@ -154,6 +155,9 @@ actor HostSession: HostSessionManaging {
     }
 
     private func runListenerRestartLoop(skipFirstPause: Bool) async {
+        // Сбрасываем listenerRestartTask при выходе, чтобы resumeAfterForeground мог
+        // корректно определить, что цикл завершился.
+        defer { listenerRestartTask = nil }
         let policy = ReconnectPolicy(backoff: config.reconnectBackoff)
         var attempt = 0
         var skipPause = skipFirstPause
@@ -180,6 +184,14 @@ actor HostSession: HostSessionManaging {
             let needsRestart = await processListenerStream(stream)
             if !needsRestart { return }
         }
+    }
+
+    // MARK: - Возобновление после foreground (ADR-11)
+
+    private func _resumeAfterForeground() async {
+        // Если цикл перезапуска listener'а активен — отменяем его и немедленно перезапускаем.
+        guard listenerRestartTask != nil else { return }
+        startListenerRestart(skipFirstPause: true)
     }
 
     // MARK: - Хэндшейк входящего соединения

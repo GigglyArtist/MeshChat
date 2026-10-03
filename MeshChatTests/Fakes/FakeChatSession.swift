@@ -82,4 +82,6 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
     nonisolated func end() async {
         lock.withLock { continuation?.finish(); continuation = nil }
     }
+
+    nonisolated func resumeAfterForeground() async {}
 }

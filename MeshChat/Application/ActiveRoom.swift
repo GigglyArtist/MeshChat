@@ -77,6 +77,10 @@ actor ActiveRoom: ActiveRoomHandling {
         await leaveInternal()
     }
 
+    nonisolated func appDidBecomeActive() async {
+        await session.resumeAfterForeground()
+    }
+
     // MARK: - Приватные методы
 
     private func sendInternal(text: String) async throws {

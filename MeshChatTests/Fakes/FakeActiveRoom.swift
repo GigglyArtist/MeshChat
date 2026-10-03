@@ -24,6 +24,7 @@ final class FakeActiveRoom: ActiveRoomHandling, @unchecked Sendable {
     nonisolated(unsafe) private var continuation: AsyncStream<RoomEvent>.Continuation?
     nonisolated(unsafe) private var _sentTexts: [String] = []
     nonisolated(unsafe) private var _leaveCount: Int = 0
+    nonisolated(unsafe) private var _appDidBecomeActiveCount: Int = 0
     /// Если задана — `send(text:)` бросает эту ошибку вместо успеха.
     // nonisolated(unsafe): доступ из nonisolated-методов, безопасность гарантирует lock.
     nonisolated(unsafe) var sendError: (any Error)?
@@ -32,6 +33,7 @@ final class FakeActiveRoom: ActiveRoomHandling, @unchecked Sendable {
 
     var sentTexts: [String] { lock.withLock { _sentTexts } }
     var leaveCount: Int { lock.withLock { _leaveCount } }
+    var appDidBecomeActiveCount: Int { lock.withLock { _appDidBecomeActiveCount } }
 
     // MARK: - Инициализация
 
@@ -70,5 +72,9 @@ final class FakeActiveRoom: ActiveRoomHandling, @unchecked Sendable {
 
     nonisolated func leave() async {
         lock.withLock { _leaveCount += 1 }
+    }
+
+    nonisolated func appDidBecomeActive() async {
+        lock.withLock { _appDidBecomeActiveCount += 1 }
     }
 }

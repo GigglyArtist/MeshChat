@@ -25,4 +25,11 @@ protocol ChatSessionManaging: AnyObject, Sendable {
 
     /// Завершает сессию (отправляет `leave` / `sessionEnded` и закрывает соединения).
     nonisolated func end() async
+
+    /// Вызывается, когда приложение возвращается на передний план (ADR-11).
+    ///
+    /// Хост: если идёт цикл перезапуска listener'а — немедленно перезапускает без паузы.
+    /// Клиент: если идёт цикл переподключения — немедленно делает попытку без паузы.
+    /// В остальных случаях — no-op.
+    nonisolated func resumeAfterForeground() async
 }

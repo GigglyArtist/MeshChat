@@ -29,5 +29,6 @@ nonisolated final class PreviewActiveRoom: ActiveRoomHandling {
 
     nonisolated func send(text: String) async throws {}
     nonisolated func leave() async {}
+    nonisolated func appDidBecomeActive() async {}
 }
 #endif

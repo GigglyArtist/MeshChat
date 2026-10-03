@@ -29,5 +29,8 @@ protocol ActiveRoomHandling: AnyObject, Sendable {
     /// Хост завершает комнату; клиент выходит. Итог — `stateChanged(.ended(.leftByUser))`.
     nonisolated func leave() async
 
-    // Этап 8: nonisolated func appDidBecomeActive() async
+    /// Приложение вернулось на передний план (ADR-11).
+    ///
+    /// Форвардирует `resumeAfterForeground()` к сетевой сессии.
+    nonisolated func appDidBecomeActive() async
 }

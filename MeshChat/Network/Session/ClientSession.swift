@@ -75,6 +75,7 @@ actor ClientSession: ChatSessionManaging {
     nonisolated func start() async { await _start() }
     nonisolated func send(text: String) async throws -> ChatMessage { try await _send(text: text) }
     nonisolated func end() async { await _end() }
+    nonisolated func resumeAfterForeground() async { await _resumeAfterForeground() }
 
     // MARK: - Запуск
 
@@ -234,16 +235,20 @@ actor ClientSession: ChatSessionManaging {
         }
     }
 
-    private func runReconnectLoop(deadline: ContinuousClock.Instant) async {
+    private func runReconnectLoop(deadline: ContinuousClock.Instant, skipFirstDelay: Bool = false) async {
         var attempt = 0
         let policy = ReconnectPolicy(backoff: config.reconnectBackoff)
+        var skipDelay = skipFirstDelay
 
         while ContinuousClock.now < deadline {
             guard case .reconnecting = state else { return }
 
             attempt += 1
-            let delay = policy.delay(forAttempt: attempt)
-            do { try await Task.sleep(for: delay) } catch { return }
+            if !skipDelay {
+                let delay = policy.delay(forAttempt: attempt)
+                do { try await Task.sleep(for: delay) } catch { return }
+            }
+            skipDelay = false
 
             guard case .reconnecting = state else { return }
             guard ContinuousClock.now < deadline else { break }
@@ -529,6 +534,17 @@ actor ClientSession: ChatSessionManaging {
             transition(to: .ended(.leftByUser))
         default:
             break
+        }
+    }
+
+    // MARK: - Возобновление после foreground (ADR-11)
+
+    private func _resumeAfterForeground() async {
+        // Если идёт цикл переподключения — отменяем паузу и немедленно делаем попытку.
+        guard case .reconnecting = state, let deadline = reconnectDeadline else { return }
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            await self?.runReconnectLoop(deadline: deadline, skipFirstDelay: true)
         }
     }
 

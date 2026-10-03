@@ -116,6 +116,11 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    /// Вызывается, когда приложение возвращается на передний план (ADR-11).
+    func appDidBecomeActive() async {
+        await room.appDidBecomeActive()
+    }
+
     func resetSendError() {
         sendError = nil
     }

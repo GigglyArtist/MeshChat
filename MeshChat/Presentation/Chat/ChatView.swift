@@ -9,6 +9,7 @@ struct ChatView: View {
     @State private var viewModel: ChatViewModel
     @State private var showLeaveConfirmation = false
     @State private var showQRSheet = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private let onLeave: () -> Void
 
@@ -47,6 +48,9 @@ struct ChatView: View {
         .toolbar { toolbarItems }
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active { Task { await viewModel.appDidBecomeActive() } }
+        }
         .onChange(of: viewModel.sessionState) { _, newState in
             if case .ended(.leftByUser) = newState { onLeave() }
         }
