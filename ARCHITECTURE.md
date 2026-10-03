@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.10 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.11 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -169,6 +169,19 @@ iOS приостанавливает приложение вскоре посл�
 - во время сессии `UIApplication.shared.isIdleTimerDisabled = true` (экран не гаснет);
 - уход хоста в фон для клиентов выглядит как потеря связи → у них идёт грейс-период 20 с;
 - при возврате в `.active` хост перезапускает listener **с тем же** `serviceName` и `roomKey`, и клиенты успевают переподключиться, если уложились в 20 с.
+
+**Уточнения этапа 8b:**
+
+| Ситуация | Поведение |
+|---|---|
+| Listener упал **до** первого `.ready` | Как раньше: `ended(.localNetworkDenied)` или `ended(.failed)` |
+| Listener упал **после** того, как комната стала `active` (`.failed(.other/.tlsFailure)`) | Комната **не** завершается. Хост помечает listener «упавшим» и перезапускает его (`stop()` → `start()` с тем же `serviceName` и безопасностью) с паузами `ReconnectPolicy`, пока не получит `.ready` или не будет вызван `end()`. Событий наружу нет |
+| `.failed(.localNetworkDenied)` после `active` (пользователь отозвал разрешение) | `ended(.localNetworkDenied)` |
+| `resumeAfterForeground()` у хоста | Listener «упавший» → перезапуск **сразу**, ожидание паузы отменяется. Listener исправен → ничего |
+| `resumeAfterForeground()` у клиента | `reconnecting` → новая попытка **сразу**, ожидание паузы отменяется. В других состояниях → ничего |
+| Возврат в `.active` после окна 20 с | Дедлайн уже прошёл: клиент сразу `ended(.hostLost)`, хост удаляет участников по истёкшим таймерам. Комната хоста продолжает работать: клиенты могут войти заново по тому же QR |
+
+Наблюдение задачи 07: повторная регистрация Bonjour на симуляторе занимала до 10–15 с — это заметная часть 20-секундного окна. На устройствах время измеряется ручным тестом (`docs/MANUAL_TESTS.md`).
 
 ---
 
@@ -587,12 +600,14 @@ protocol ChatSessionManaging: AnyObject, Sendable {
     func send(text: String) async throws -> ChatMessage
     /// Хост: разослать `sessionEnded` и остановиться. Клиент: отправить `leave` и закрыться.
     func end() async
+    /// Приложение вернулось в `.active` (ADR-11, этап 8b). Хост: перезапустить упавший listener сразу.
+    /// Клиент: в `reconnecting` — попытка сразу. Иначе ничего.
+    func resumeAfterForeground() async
 }
 
 protocol HostSessionManaging: ChatSessionManaging {
     var sessionID: UUID { get }
     var invite: RoomInvite { get }
-    // Этап 8: func resumeAfterForeground() async — перезапуск listener'а после возврата в .active (ADR-11).
 }
 ```
 
@@ -726,7 +741,8 @@ start():
   sessionID = UUID(); serviceName = UUID().uuidString
   listener.start(serviceName, .tlsPSK(secret.tlsPreSharedKey))
   ListenerEvent.ready  → state = .active (хост может писать сразу, даже в пустой комнате)
-  ListenerEvent.failed → нет разрешения «Локальная сеть» ? .ended(.localNetworkDenied) : .ended(.failed)
+  ListenerEvent.failed до первого ready → нет разрешения «Локальная сеть» ? .ended(.localNetworkDenied) : .ended(.failed)
+  ListenerEvent.failed после active → перезапуск listener'а (ADR-11, «Уточнения этапа 8b»)
 
 на каждое входящее соединение c (дочерняя задача группы):
   c.start(); ждать .ready                             ─ таймаут handshakeTimeout → c.cancel()
@@ -1401,7 +1417,8 @@ protocol ActiveRoomHandling: AnyObject, Sendable {
     func send(text: String) async throws
     /// Хост завершает комнату, клиент выходит. Итог — `stateChanged(.ended(.leftByUser))`.
     func leave() async
-    // Этап 8: func appDidBecomeActive() async
+    /// Приложение вернулось в `.active`: передаёт `resumeAfterForeground()` сессии.
+    func appDidBecomeActive() async
 }
 
 enum RoomError: Error, Sendable, Equatable {
@@ -1681,6 +1698,8 @@ enum NetworkError: Error, Sendable, Equatable {
 | Второй чат с тем же другом | В «Истории» у друга две сессии |
 | Запрет «Локальной сети» в настройках | Понятное сообщение, без падения |
 
+С этапа 8b таблица ведётся в репозитории — `docs/MANUAL_TESTS.md`: шаги, ожидание, результат (✅/❌), дата, устройства и версии iOS, заметки. Это доказательство ручного тестирования для защиты.
+
 Совет: peer-to-peer Wi-Fi работает только на реальных устройствах. Для отладки логики удобно сочетать симулятор и устройство в одной Wi-Fi-сети (через инфраструктурный Wi-Fi) и DEBUG-режим без TLS.
 
 ### 16.3. Тесты со временем: правила против «плавающих» падений
@@ -1903,3 +1922,12 @@ docs(architecture): describe TLS-PSK channel security
 | Раздел | Изменение | Причина |
 |---|---|---|
 | §16.3 | 10 прогонов подряд выполняет автор скриптом `stress_meshchat.sh`; агент — один полный прогон и точечные повторы упавшего набора; тег — после 10/10 у автора | Агент дважды исчерпал лимит на цикле из 10 прогонов: фоновые задачи обрываются через 10 минут, а ожидание их результатов расходует контекст |
+
+### v1.11 — перед задачей 08b
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| ADR-11 | Уточнения этапа 8b: listener после `active` перезапускается, а не завершает комнату; поведение `resumeAfterForeground()` | iOS может отобрать слушающий сокет у приостановленного приложения |
+| §7.2 | `resumeAfterForeground()` перенесён в `ChatSessionManaging` (у клиента — немедленная попытка) | `ActiveRoom` работает с `any ChatSessionManaging` без приведения типов |
+| §11 | `ActiveRoomHandling.appDidBecomeActive()` | Экран чата сообщает о возврате приложения |
+| §16.2 | Журнал ручных тестов `docs/MANUAL_TESTS.md` | Доказательство тестирования на устройствах |
