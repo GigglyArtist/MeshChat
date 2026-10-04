@@ -9,4 +9,10 @@ enum Route: Hashable {
     case joinRoom
     /// Активный чат; путь заменяется на `[.chat(…)]` после создания/входа.
     case chat(ChatRoute)
+    /// Список собеседников из истории.
+    case history
+    /// Список сессий с конкретным собеседником.
+    case peerHistory(PeerProfile)
+    /// Переписка одной сессии (только чтение).
+    case transcript(sessionID: UUID)
 }

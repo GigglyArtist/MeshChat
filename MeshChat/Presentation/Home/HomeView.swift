@@ -9,6 +9,7 @@ struct HomeView: View {
     let nickname: String
     let onCreateRoom: () -> Void
     let onJoinRoom: () -> Void
+    let onHistory: () -> Void
 
     var body: some View {
         List {
@@ -21,11 +22,11 @@ struct HomeView: View {
                 }
             }
 
-            Section("История") {
-                Text("История сессий появится здесь.")
-                    .foregroundStyle(.secondary)
+            Section {
+                Button(action: onHistory) {
+                    Label("История", systemImage: "clock")
+                }
             }
-            .disabled(true)
         }
         .navigationTitle(nickname)
     }
@@ -34,7 +35,7 @@ struct HomeView: View {
 #if DEBUG
 #Preview {
     NavigationStack {
-        HomeView(nickname: "Preview", onCreateRoom: {}, onJoinRoom: {})
+        HomeView(nickname: "Preview", onCreateRoom: {}, onJoinRoom: {}, onHistory: {})
     }
 }
 #endif

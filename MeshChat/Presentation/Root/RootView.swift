@@ -34,7 +34,8 @@ struct RootView: View {
             HomeView(
                 nickname: environment.identity.nickname() ?? "",
                 onCreateRoom: { viewModel.navigate(to: .createRoom) },
-                onJoinRoom: { viewModel.navigate(to: .joinRoom) }
+                onJoinRoom: { viewModel.navigate(to: .joinRoom) },
+                onHistory: { viewModel.navigate(to: .history) }
             )
             .navigationDestination(for: Route.self) { route in
                 switch route {
@@ -51,6 +52,20 @@ struct RootView: View {
                         room: chatRoute.room,
                         localNickname: localNickname,
                         onLeave: { viewModel.navigationPath.removeAll() }
+                    )
+                case .history:
+                    PeersListView(history: environment.history) { peer in
+                        viewModel.navigate(to: .peerHistory(peer))
+                    }
+                case .peerHistory(let peer):
+                    PeerHistoryView(peer: peer, history: environment.history) { sessionID in
+                        viewModel.navigate(to: .transcript(sessionID: sessionID))
+                    }
+                case .transcript(let sessionID):
+                    SessionTranscriptView(
+                        sessionID: sessionID,
+                        localPeerID: environment.localPeerID,
+                        history: environment.history
                     )
                 }
             }
