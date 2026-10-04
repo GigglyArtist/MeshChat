@@ -1,6 +1,6 @@
 # MeshChat — архитектура проекта
 
-> **Статус:** v1.11 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
+> **Статус:** v1.12 (утверждено, изменения — в §19) · **Лицензия:** GPL-3.0-or-later · **Платформа:** iOS 17.0+, Swift 6, SwiftUI, Core Data, Network.framework
 >
 > Этот документ — **источник истины**. Любой код, промпт ИИ-агенту и коммит сверяется с ним.
 > Архитектура меняется только правкой этого файла отдельным коммитом `docs(architecture): …`.
@@ -182,6 +182,13 @@ iOS приостанавливает приложение вскоре посл�
 | Возврат в `.active` после окна 20 с | Дедлайн уже прошёл: клиент сразу `ended(.hostLost)`, хост удаляет участников по истёкшим таймерам. Комната хоста продолжает работать: клиенты могут войти заново по тому же QR |
 
 Наблюдение задачи 07: повторная регистрация Bonjour на симуляторе занимала до 10–15 с — это заметная часть 20-секундного окна. На устройствах время измеряется ручным тестом (`docs/MANUAL_TESTS.md`).
+
+#### ADR-12. Комната эфемерна, история постоянна
+
+- **Комната живёт, пока жив процесс хоста.** `roomKey`, `serviceName` и список участников хранятся только в памяти (ADR-04). Если хост **закрыл** приложение (а не свернул) или iOS его выгрузила, комнату восстановить нельзя: клиенты через 20 с получают «Хост завершил сессию».
+- **Восстанавливать комнату после перезапуска не будем — это осознанное решение.** Чтобы «воскресить» комнату, пришлось бы сохранять ключ комнаты на диск или в Keychain. Это нарушает модель угроз (§15): записанный ключ позволяет войти в комнату и расшифровать её трафик, а также противоречит принципу «пароль и ключ нигде не сохраняются».
+- **Непрерывность обеспечивает история, а не комната.** Хост создаёт новую комнату с новым QR. Когда друзья входят, их `PermanentPeerID` совпадают с уже известными, и новая сессия привязывается к той же истории (R14). Пользователь теряет только «живое соединение», но не переписку.
+- **Повторный вход клиента в живую комнату** разрешён и уже работает: пока процесс хоста жив, QR действует. Клиент, вылетевший по таймауту, входит заново как новый участник, а сессия в хранилище та же (`createSession` идемпотентен). На этапе 11 добавится кнопка «Подключиться снова», чтобы не сканировать QR повторно (§12.1.1).
 
 ---
 
@@ -1437,13 +1444,35 @@ enum RoomNotice: Sendable, Equatable {
     case left(nickname: String, reason: LeaveReason)
 }
 
+/// Собеседник для экрана «История».
+struct PeerSummary: Sendable, Hashable, Identifiable {
+    var id: UUID { profile.id }
+    let profile: PeerProfile
+    let sessionCount: Int
+    /// createdAt самой свежей сессии с этим человеком; nil, если сессий нет.
+    let lastSessionAt: Date?
+}
+
+/// Сохранённая переписка одной сессии.
+struct SessionTranscript: Sendable, Hashable {
+    let session: ChatSessionInfo
+    /// По возрастанию timestamp.
+    let messages: [ChatMessage]
+}
+
 protocol HistoryServicing: Sendable {
-    func knownPeers() async throws -> [PeerProfile]
+    /// Все известные собеседники; сначала с более свежей сессией, без сессий — в конце (по нику).
+    func peerSummaries() async throws -> [PeerSummary]
+    /// Сессии с этим человеком, новые сверху.
     func sessions(withPeer peerID: UUID) async throws -> [ChatSessionInfo]
-    func messages(inSession sessionID: UUID) async throws -> [ChatMessage]
+    /// Бросает `StorageError.sessionNotFound`.
+    func transcript(sessionID: UUID) async throws -> SessionTranscript
+    /// Удаляет сессию и её сообщения (Cascade); собеседники остаются (R13).
     func deleteSession(id: UUID) async throws
 }
 ```
+
+`HistoryService` (Application) — тонкий слой над `StorageManaging`, без своего состояния. `PeerSummary` собирается из `allPeers()` и `sessions(withPeer:)`: при 5 участниках и десятках сессий это быстро, отдельный запрос в хранилище не нужен.
 
 ### 11.1. Как `ActiveRoom` обрабатывает события сети
 
@@ -1498,12 +1527,13 @@ actor ActiveRoom: ActiveRoomHandling {
 | `RoomQRCodeView` | — | QR приглашения (с этапа 7 — sheet из чата хоста) |
 | `JoinRoomView` | `JoinRoomViewModel` | Сканер QR (VisionKit) → подключение |
 | `ChatView` | `ChatViewModel` | Лента, ввод, участники, баннеры состояния; у хоста — кнопка QR (sheet `RoomQRCodeView`) |
-| `PeersListView` | `HistoryViewModel` | Известные собеседники |
-| `PeerHistoryView` | `PeerHistoryViewModel` | Сессии и сообщения с одним человеком (только чтение) |
+| `PeersListView` | `HistoryViewModel` | Известные собеседники: ник, число чатов, дата последнего |
+| `PeerHistoryView` | `PeerHistoryViewModel` | Сессии с одним человеком, новые сверху; удаление сессии смахиванием с подтверждением |
+| `SessionTranscriptView` | `SessionTranscriptViewModel` | Сообщения одной сессии, только чтение |
 
 **С этапа 7** временная схема этапов 3–6 снята: `CreateRoomViewModel` вызывает `RoomServicing.createRoom`, `JoinRoomViewModel` — `joinRoom`; оба после успеха открывают чат.
 
-**Навигация:** `NavigationStack(path:)` в `RootView`, `enum Route: Hashable { case createRoom, joinRoom, chat(ChatRoute) }`. `ChatRoute` — обёртка над `any ActiveRoomHandling` с равенством и хэшем по `ObjectIdentifier`. После создания или входа путь **заменяется** на `[.chat(…)]`, чтобы «Назад» не вёл на экран пароля или сканера. Системная кнопка «Назад» в чате скрыта: выход — только через «Выйти» / «Завершить» с подтверждением, затем `path.removeAll()`.
+**Навигация:** `NavigationStack(path:)` в `RootView`, `enum Route: Hashable { case createRoom, joinRoom, chat(ChatRoute), history, peerHistory(PeerProfile), transcript(sessionID: UUID) }`. `ChatRoute` — обёртка над `any ActiveRoomHandling` с равенством и хэшем по `ObjectIdentifier`. После создания или входа путь **заменяется** на `[.chat(…)]`, чтобы «Назад» не вёл на экран пароля или сканера. Системная кнопка «Назад» в чате скрыта: выход — только через «Выйти» / «Завершить» с подтверждением, затем `path.removeAll()`.
 
 ### 12.1.1. Чат
 
@@ -1512,6 +1542,16 @@ actor ActiveRoom: ActiveRoomHandling {
 - **Отправка:** `canSend = state == .active && MessageTextPolicy.normalize(draft) != nil`. Успех — черновик очищается. Ошибка — черновик сохраняется, показывается текст ошибки.
 - **Экран не гаснет:** `UIApplication.shared.isIdleTimerDisabled = true` на время чата (ADR-11).
 - **Баннер** — чистая функция `SessionState → текст` по таблице §12.3, покрывается параметризованным тестом.
+- **«Подключиться снова» (этап 11, ADR-12):** у клиента после `ended(.hostLost / .hostUnreachable / .handshakeTimeout)` — кнопка повторного входа по тому же приглашению. Приглашение хранится только в памяти (`ChatRoute`), на диск не пишется. После `hostEnded` кнопки нет: хост завершил комнату сам.
+
+### 12.1.2. История
+
+- **Только чтение**: из истории нельзя писать; продолжить общение — создать новую комнату.
+- **Имена авторов** в переписке: участники сессии (`session.participants`), свои — «Вы» (`localPeerID`), иначе — «Неизвестный».
+- **Строка сессии:** дата и время начала, «Вы были хостом» / «Вы были участником», остальные участники через запятую.
+- **Пустые состояния:** «Здесь появятся люди, с которыми вы переписывались» и «Чатов не осталось».
+- **Удаление сессии** (смахивание → подтверждение «Удалить переписку? Она удалится только на этом устройстве») → `deleteSession` → список обновляется. Собеседник остаётся (R13); у него «Нет сохранённых чатов».
+- Активной комнаты в момент просмотра истории нет: путь в стеке начинается с главного экрана, а чат при выходе очищает путь.
 
 ### 12.2. Правила
 
@@ -1577,7 +1617,9 @@ struct AppEnvironment: Sendable {
     let identity: any IdentityProviding
     let storage: any StorageManaging
     let rooms: any RoomServicing                // с этапа 7 (secrets ушёл внутрь RoomService)
-    // Этап 10: history: any HistoryServicing
+    let history: any HistoryServicing           // с этапа 10
+    /// PermanentPeerID этого устройства (получен в AppStartup) — чтобы подписывать свои сообщения «Вы».
+    let localPeerID: UUID
 
     #if DEBUG
     @MainActor static func preview() -> AppEnvironment { /* фейки + in-memory хранилище */ }
@@ -1822,9 +1864,9 @@ docs(architecture): describe TLS-PSK channel security
 | 7 | Комната и чат | `ActiveRoom`, `RoomService`, привязка к истории, `ChatView`, сквозной тест «две комнаты — одна история»; первый чат между двумя устройствами | §11, §12 |
 | 8a | Сетевая надёжность | Heartbeat, тишина, грейс-период 20 с, переподключение клиента, `suspended` у хоста | §9 |
 | 8b | Жизненный цикл и устройства | `scenePhase`, `resumeAfterForeground`, перезапуск listener'а, ручные тесты §16.2 на устройствах | ADR-11, §16.2 |
-| 9 | Проверка шифрования | TLS-PSK на двух устройствах; по желанию — снимок трафика, в котором не видно ID и ников | ADR-03, §15.1 |
-| 10 | История | Экраны истории, удаление сессий | §10.4, §12 |
-| 11 | Финиш | Обработка ошибок в UI, README со скриншотами, ручные тесты §16.2, тег `v1.0` | §14–16 |
+| 9 | Проверка на устройствах | Выполнена в рамках 8b (`docs/MANUAL_TESTS.md`). По желанию к защите — снимок трафика Wireshark, в котором не видно ID и ников | ADR-03, §15.1 |
+| 10 | История | `HistoryService`, экраны «История» → собеседник → переписка, удаление сессий | §11, §12.1.2 |
+| 11 | Финиш | «Подключиться снова», обработка ошибок в UI, String Catalog, README со скриншотами, финальные ручные тесты, тег `v1.0` | ADR-12, §12–16 |
 
 ---
 
@@ -1931,3 +1973,13 @@ docs(architecture): describe TLS-PSK channel security
 | §7.2 | `resumeAfterForeground()` перенесён в `ChatSessionManaging` (у клиента — немедленная попытка) | `ActiveRoom` работает с `any ChatSessionManaging` без приведения типов |
 | §11 | `ActiveRoomHandling.appDidBecomeActive()` | Экран чата сообщает о возврате приложения |
 | §16.2 | Журнал ручных тестов `docs/MANUAL_TESTS.md` | Доказательство тестирования на устройствах |
+
+### v1.12 — перед задачей 10
+
+| Раздел | Изменение | Причина |
+|---|---|---|
+| ADR-12 | Комната эфемерна, история постоянна: комнату после закрытия приложения хостом не восстанавливаем; повторный вход клиента в живую комнату разрешён | Вопрос автора после ручных тестов 8b; сохранение ключа комнаты нарушило бы модель угроз |
+| §11 | `HistoryServicing` с `PeerSummary` и `SessionTranscript` | Экраны истории |
+| §12.1, §12.1.1, §12.1.2 | Экраны и навигация истории; кнопка «Подключиться снова» (этап 11) | Этапы 10–11 |
+| §13 | `AppEnvironment.history`, `localPeerID` | Подписи «Вы» в истории |
+| §18 | Этап 9 закрыт ручными тестами 8b; состав этапов 10–11 | Ручные тесты на iPhone и симуляторе пройдены |
