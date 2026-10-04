@@ -15,9 +15,9 @@ enum AppStartup {
         let service = (Bundle.main.bundleIdentifier ?? "com.meshchat") + ".identity"
         let keychain = KeychainStore(service: service)
         let identity = IdentityProvider(keychain: keychain)
-        // Генерируем PermanentPeerID до появления UI, чтобы онбординг не падал при сохранении ника
+        let localPeerID: UUID
         do {
-            _ = try identity.permanentPeerID()
+            localPeerID = try identity.permanentPeerID()
         } catch {
             return .failed("Не удалось получить идентификатор устройства: \(error.localizedDescription)")
         }
@@ -34,6 +34,13 @@ enum AppStartup {
             network: MeshNetworkService(),
             storage: storage
         )
-        return .ready(AppEnvironment(identity: identity, storage: storage, rooms: rooms))
+        let history = HistoryService(storage: storage)
+        return .ready(AppEnvironment(
+            identity: identity,
+            storage: storage,
+            rooms: rooms,
+            history: history,
+            localPeerID: localPeerID
+        ))
     }
 }

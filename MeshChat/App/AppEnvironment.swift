@@ -10,6 +10,10 @@ struct AppEnvironment: Sendable {
     let storage: any StorageManaging
     /// Фабрика активных комнат: создание и вход (§13, с этапа 7 `secrets` внутри RoomService).
     let rooms: any RoomServicing
+    /// Доступ к истории переписки (§11, §13).
+    let history: any HistoryServicing
+    /// PermanentPeerID этого устройства — для подписи «Вы» в истории (§13).
+    let localPeerID: UUID
 
     // MARK: - Previews
 
@@ -27,7 +31,9 @@ struct AppEnvironment: Sendable {
         return AppEnvironment(
             identity: identity,
             storage: storage,
-            rooms: PreviewRoomService()
+            rooms: PreviewRoomService(),
+            history: PreviewHistoryService(),
+            localPeerID: UUID()
         )
     }
     #endif
