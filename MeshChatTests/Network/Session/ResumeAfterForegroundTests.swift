@@ -72,17 +72,15 @@ struct ResumeAfterForegroundTests {
 
         // Listener падает → задача уходит в 30-секундный backoff
         listener.emitFailure(.other("link down"))
-        // Ждём, пока актор HostSession обработает .failed и установит listenerRestartTask.
-        // Без паузы resumeAfterForeground() может прийти к актору раньше, чем
-        // processListenerStream вернёт true и startListenerRestart будет вызван.
-        try await Task.sleep(for: .milliseconds(100))
 
-        // Вызываем resumeAfterForeground — должно пропустить паузу
-        await session.resumeAfterForeground()
-
-        // Второй запуск listener'а должен произойти быстро (без 30-секундного ожидания)
-        let deadline = ContinuousClock.now + .seconds(5)
-        while listener.startCount < 2, ContinuousClock.now < deadline {
+        // Вызываем resumeAfterForeground в цикле каждые 20 мс, пока startCount < 2 или не истекла 1 с.
+        // Первые вызовы могут быть no-op (актор ещё не обработал .failed и не установил
+        // listenerRestartTask); как только задача перезапуска создана, следующий вызов
+        // пропускает 30-секундную паузу (ADR-11). Backoff 30 с ≫ 1 с: второй запуск
+        // в пределах 1 с доказывает, что пауза была пропущена.
+        let resumeDeadline = ContinuousClock.now + .seconds(1)
+        while listener.startCount < 2, ContinuousClock.now < resumeDeadline {
+            await session.resumeAfterForeground()
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(listener.startCount == 2, "resumeAfterForeground should bypass backoff")
