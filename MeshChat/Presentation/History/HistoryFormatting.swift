@@ -8,7 +8,7 @@ enum HistoryFormatting {
 
     /// Подпись под ником в списке собеседников.
     /// «3 чата · 4 окт.» или «Нет сохранённых чатов».
-    static func peerSubtitle(_ summary: PeerSummary) -> String {
+    nonisolated static func peerSubtitle(_ summary: PeerSummary) -> String {
         guard summary.sessionCount > 0, let date = summary.lastSessionAt else {
             return "Нет сохранённых чатов"
         }
@@ -18,12 +18,12 @@ enum HistoryFormatting {
     }
 
     /// Заголовок строки сессии: дата и время начала.
-    static func sessionTitle(_ session: ChatSessionInfo) -> String {
+    nonisolated static func sessionTitle(_ session: ChatSessionInfo) -> String {
         session.createdAt.formatted(.dateTime.day().month(.abbreviated).year().hour().minute())
     }
 
     /// Подпись строки сессии: роль и участники по нику в алфавитном порядке.
-    static func sessionSubtitle(_ session: ChatSessionInfo) -> String {
+    nonisolated static func sessionSubtitle(_ session: ChatSessionInfo) -> String {
         let roleStr = session.role == .host ? "Вы были хостом" : "Вы были участником"
         let sorted = session.participants.sorted {
             $0.nickname.localizedStandardCompare($1.nickname) == .orderedAscending
