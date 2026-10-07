@@ -133,7 +133,7 @@ struct RoomLoopbackTests {
         let hostIdentity = LocalIdentity.makeTest(nickname: "Host")
         let clientIdentity = LocalIdentity.makeTest(nickname: "Client")
 
-        // Запустить хоста
+        // Запустить хоста; ActiveRoom.start() запускает сессию внутри
         let tap = ListenerTap()
         let hostSession = HostSession(
             identity: hostIdentity, secret: secret,
@@ -146,7 +146,6 @@ struct RoomLoopbackTests {
             sessionID: hostSession.sessionID
         )
         let hostProbe = EventProbe<RoomEvent>(stream: hostRoom.events)
-        Task { await hostSession.start() }
         await hostRoom.start()
 
         _ = try await hostProbe.waitFor(timeout: .seconds(10)) {
@@ -166,7 +165,6 @@ struct RoomLoopbackTests {
             localPeerID: clientIdentity.peerID, invite: invite, sessionID: nil
         )
         let probe1 = EventProbe<RoomEvent>(stream: room1.events)
-        Task { await session1.start() }
         await room1.start()
 
         _ = try await probe1.waitFor(timeout: .seconds(10)) {
@@ -195,7 +193,6 @@ struct RoomLoopbackTests {
             localPeerID: clientIdentity.peerID, invite: invite, sessionID: nil
         )
         let probe2 = EventProbe<RoomEvent>(stream: room2.events)
-        Task { await session2.start() }
         await room2.start()
 
         // Первое значимое событие — messagesRestored с «До обрыва»
