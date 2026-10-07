@@ -13,4 +13,8 @@ nonisolated enum RoomEvent: Sendable, Equatable {
     case messageAppended(ChatMessage)
     /// Служебное уведомление (вход / выход участника).
     case notice(RoomNotice)
+    /// Клиент снова вошёл в уже знакомую сессию: сохранённые ранее сообщения (по возрастанию
+    /// времени) и участники этой сессии из хранилища — чтобы подписать авторов, даже если они
+    /// уже ушли. Выдаётся до любых других событий повторной сессии (§11.1, ADR-12).
+    case messagesRestored([ChatMessage], knownPeers: [PeerProfile])
 }

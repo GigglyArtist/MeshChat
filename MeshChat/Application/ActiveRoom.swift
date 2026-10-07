@@ -116,6 +116,17 @@ actor ActiveRoom: ActiveRoomHandling {
             } catch {
                 Self.logger.error("createSession failed: \(error, privacy: .public)")
             }
+            // Восстановить ранее сохранённые сообщения при повторном входе (ADR-12, §11.1).
+            do {
+                let messages = try await storage.messages(inSession: sid)
+                if !messages.isEmpty {
+                    let info = try? await storage.session(id: sid)
+                    let knownPeers = info?.participants ?? []
+                    continuation?.yield(.messagesRestored(messages, knownPeers: knownPeers))
+                }
+            } catch {
+                Self.logger.error("messages restore failed: \(error, privacy: .public)")
+            }
 
         case .participantJoined(let profile):
             participants[profile.id] = profile

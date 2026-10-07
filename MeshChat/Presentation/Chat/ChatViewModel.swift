@@ -143,6 +143,9 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
 
         case .notice(let notice):
             items.append(.notice(id: UUID(), text: noticeText(notice)))
+
+        case .messagesRestored:
+            break
         }
     }
 
