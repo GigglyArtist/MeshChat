@@ -41,17 +41,20 @@ struct RootView: View {
                 switch route {
                 case .createRoom:
                     CreateRoomView(rooms: environment.rooms) { room in
-                        viewModel.navigateToChat(room: room)
+                        viewModel.navigateToChat(route: ChatRoute(room: room))
                     }
                 case .joinRoom:
-                    JoinRoomView(rooms: environment.rooms) { room in
-                        viewModel.navigateToChat(room: room)
+                    JoinRoomView(rooms: environment.rooms) { route in
+                        viewModel.navigateToChat(route: route)
                     }
                 case .chat(let chatRoute):
                     ChatView(
                         room: chatRoute.room,
                         localNickname: localNickname,
-                        onLeave: { viewModel.navigationPath.removeAll() }
+                        rejoinInvite: chatRoute.rejoinInvite,
+                        rooms: environment.rooms,
+                        onLeave: { viewModel.navigationPath.removeAll() },
+                        onRejoined: { route in viewModel.navigationPath = [.chat(route)] }
                     )
                 case .history:
                     PeersListView(history: environment.history) { peer in

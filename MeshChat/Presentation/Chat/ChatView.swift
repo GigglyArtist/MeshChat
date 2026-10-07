@@ -12,12 +12,19 @@ struct ChatView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private let onLeave: () -> Void
+    private let onRejoined: (ChatRoute) -> Void
 
     init(room: any ActiveRoomHandling,
          localNickname: String,
-         onLeave: @escaping () -> Void) {
-        _viewModel = State(wrappedValue: ChatViewModel(room: room, localNickname: localNickname))
+         rejoinInvite: RoomInvite? = nil,
+         rooms: (any RoomServicing)? = nil,
+         onLeave: @escaping () -> Void,
+         onRejoined: @escaping (ChatRoute) -> Void = { _ in }) {
+        _viewModel = State(wrappedValue: ChatViewModel(
+            room: room, localNickname: localNickname,
+            rejoinInvite: rejoinInvite, rooms: rooms))
         self.onLeave = onLeave
+        self.onRejoined = onRejoined
     }
 
     var body: some View {
@@ -30,6 +37,17 @@ struct ChatView: View {
                     .foregroundStyle(.red)
                     .padding(.horizontal)
                     .padding(.vertical, 4)
+            }
+
+            if viewModel.isRejoining {
+                ProgressView()
+                    .padding(.vertical, 4)
+            } else if viewModel.canRejoin {
+                Button("Подключиться снова") {
+                    Task { await viewModel.rejoin() }
+                }
+                .buttonStyle(.borderedProminent)
+                .padding(.vertical, 4)
             }
 
             messageList
@@ -53,6 +71,9 @@ struct ChatView: View {
         }
         .onChange(of: viewModel.sessionState) { _, newState in
             if case .ended(.leftByUser) = newState { onLeave() }
+        }
+        .onChange(of: viewModel.rejoinedRoute) { _, route in
+            if let route { onRejoined(route) }
         }
         .confirmationDialog(
             viewModel.role == .host ? "Завершить комнату?" : "Выйти из комнаты?",

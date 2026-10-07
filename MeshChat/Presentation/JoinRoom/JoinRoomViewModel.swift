@@ -18,8 +18,10 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
     }
 
     private(set) var state: State = .checkingCamera
-    /// Установлена после успешного `joinRoom`; View наблюдает и вызывает `onSuccess`.
-    private(set) var joinedRoom: (any ActiveRoomHandling)?
+    /// Маршрут с комнатой и приглашением для повторного входа (§12.1.1).
+    private(set) var joinedRoute: ChatRoute?
+    /// Обратная совместимость: комната без маршрута.
+    var joinedRoom: (any ActiveRoomHandling)? { joinedRoute?.room }
 
     #if DEBUG
     var debugPayloadInput: String = ""
@@ -74,7 +76,7 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
     private func join(invite: RoomInvite) async {
         do {
             let room = try await rooms.joinRoom(invite: invite)
-            joinedRoom = room
+            joinedRoute = ChatRoute(room: room, rejoinInvite: invite)
         } catch RoomError.nicknameMissing {
             state = .failed("Укажите ник перед входом в комнату")
         } catch {

@@ -8,9 +8,9 @@ import VisionKit
 struct JoinRoomView: View {
 
     @State private var viewModel: JoinRoomViewModel
-    private let onSuccess: (any ActiveRoomHandling) -> Void
+    private let onSuccess: (ChatRoute) -> Void
 
-    init(rooms: any RoomServicing, onSuccess: @escaping (any ActiveRoomHandling) -> Void) {
+    init(rooms: any RoomServicing, onSuccess: @escaping (ChatRoute) -> Void) {
         _viewModel = State(wrappedValue: JoinRoomViewModel(rooms: rooms))
         self.onSuccess = onSuccess
     }
@@ -37,8 +37,8 @@ struct JoinRoomView: View {
         .navigationTitle("Войти по QR")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.prepare() }
-        .onChange(of: viewModel.joinedRoom != nil) { _, isSet in
-            if isSet, let room = viewModel.joinedRoom { onSuccess(room) }
+        .onChange(of: viewModel.joinedRoute) { _, route in
+            if let route { onSuccess(route) }
         }
     }
 

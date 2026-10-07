@@ -10,6 +10,13 @@ import Foundation
 struct ChatRoute: Hashable {
 
     let room: any ActiveRoomHandling
+    /// Приглашение для повторного входа; только у клиента (§12.1.1).
+    let rejoinInvite: RoomInvite?
+
+    init(room: any ActiveRoomHandling, rejoinInvite: RoomInvite? = nil) {
+        self.room = room
+        self.rejoinInvite = rejoinInvite
+    }
 
     static func == (lhs: ChatRoute, rhs: ChatRoute) -> Bool {
         ObjectIdentifier(lhs.room) == ObjectIdentifier(rhs.room)

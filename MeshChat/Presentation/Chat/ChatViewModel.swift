@@ -72,17 +72,29 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
         }
     }
 
+    /// Повторный вход: кнопка «Подключиться снова» (§12.1.1).
+    private(set) var canRejoin: Bool = false
+    private(set) var isRejoining: Bool = false
+    private(set) var rejoinedRoute: ChatRoute?
+
     // MARK: - Приватное состояние
 
     private let room: any ActiveRoomHandling
+    private let rejoinInvite: RoomInvite?
+    private let rooms: (any RoomServicing)?
     // peerNames пополняется из participantsChanged; ушедшие не удаляются (§12.1.1).
     private var peerNames: [UUID: String] = [:]
     private var eventTask: Task<Void, Never>?
 
     // MARK: - Init / deinit
 
-    init(room: any ActiveRoomHandling, localNickname: String) {
+    init(room: any ActiveRoomHandling,
+         localNickname: String,
+         rejoinInvite: RoomInvite? = nil,
+         rooms: (any RoomServicing)? = nil) {
         self.room = room
+        self.rejoinInvite = rejoinInvite
+        self.rooms = rooms
         peerNames[room.localPeerID] = localNickname
         UIApplication.shared.isIdleTimerDisabled = true
     }
@@ -134,10 +146,38 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
 
     // MARK: - Обработка событий
 
+    /// Подключиться снова с тем же приглашением после обрыва (§12.1.1).
+    func rejoin() async {
+        guard let invite = rejoinInvite, let rooms = rooms else { return }
+        isRejoining = true
+        sendError = nil
+        do {
+            let newRoom = try await rooms.joinRoom(invite: invite)
+            rejoinedRoute = ChatRoute(room: newRoom, rejoinInvite: invite)
+        } catch {
+            logger.error("rejoin failed: \(error, privacy: .public)")
+            sendError = "Не удалось подключиться к комнате"
+            isRejoining = false
+        }
+    }
+
+    private func updateCanRejoin() {
+        guard rejoinInvite != nil, rooms != nil, !isRejoining else { canRejoin = false; return }
+        if case .ended(let reason) = sessionState {
+            switch reason {
+            case .hostLost, .hostUnreachable, .handshakeTimeout: canRejoin = true
+            default: canRejoin = false
+            }
+        } else {
+            canRejoin = false
+        }
+    }
+
     private func handle(_ event: RoomEvent) {
         switch event {
         case .stateChanged(let state):
             sessionState = state
+            updateCanRejoin()
 
         case .participantsChanged(let profiles):
             participants = profiles
