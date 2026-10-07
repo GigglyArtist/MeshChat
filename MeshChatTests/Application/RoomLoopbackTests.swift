@@ -10,7 +10,7 @@ import Foundation
 /// `@MainActor` нужен: `ActiveRoom.init` выводится как `@MainActor`-изолированный
 /// при `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`.
 @MainActor
-@Suite("RoomLoopbackTests", .serialized, .timeLimit(.minutes(1)))
+@Suite("RoomLoopbackTests", .serialized, .timeLimit(.minutes(2)))
 struct RoomLoopbackTests {
 
     // MARK: - Вспомогательные методы
@@ -29,6 +29,10 @@ struct RoomLoopbackTests {
                               localPeerID: UUID(), invite: nil, sessionID: sessionID)
         let probe = EventProbe<RoomEvent>(stream: room.events)
         return (room, probe)
+    }
+
+    func makeSecret(byte: UInt8 = 0xAB) throws -> any RoomSecret {
+        try RoomCredentials(roomKeyData: Data(repeating: byte, count: 32))
     }
 
     // MARK: 1. «Две комнаты — одна история» (R14)
@@ -115,5 +119,105 @@ struct RoomLoopbackTests {
         #expect(stored.count == 2, "both outgoing and incoming messages must be saved")
         #expect(stored.contains { $0.text == "Привет от хоста" })
         #expect(stored.contains { $0.id == incomingID })
+    }
+
+    // MARK: 3. Клиент переподключается и получает сохранённые сообщения (ADR-12)
+
+    /// Клиент входит, отправляет «До обрыва», уходит, снова входит с тем же приглашением.
+    /// Ожидаемый результат: первое событие нового `ActiveRoom` — `.messagesRestored` с
+    /// сообщением «До обрыва», хост снова видит клиента, в хранилище ровно одна сессия с хостом.
+    @Test("client rejoins and receives previously saved messages over real TLS (ADR-12)")
+    func rejoinReceivesRestoredMessages() async throws {
+        let storage = try makeStorage()
+        let secret = try makeSecret()
+        let hostIdentity = LocalIdentity.makeTest(nickname: "Host")
+        let clientIdentity = LocalIdentity.makeTest(nickname: "Client")
+
+        // Запустить хоста
+        let tap = ListenerTap()
+        let hostSession = HostSession(
+            identity: hostIdentity, secret: secret,
+            listener: tap, configuration: .loopback
+        )
+        try await storage.createSession(id: hostSession.sessionID, role: .host, createdAt: Date())
+        let hostRoom = ActiveRoom(
+            session: hostSession, storage: storage,
+            localPeerID: hostIdentity.peerID, invite: hostSession.invite,
+            sessionID: hostSession.sessionID
+        )
+        let hostProbe = EventProbe<RoomEvent>(stream: hostRoom.events)
+        Task { await hostSession.start() }
+        await hostRoom.start()
+
+        _ = try await hostProbe.waitFor(timeout: .seconds(10)) {
+            if case .stateChanged(.active) = $0 { return true }; return false
+        }
+        let port = try await tap.waitForPort()
+        let invite = hostSession.invite
+        let clientSecret = try RoomCredentials(roomKeyData: invite.roomKey)
+
+        // Первое подключение клиента
+        let session1 = ClientSession(
+            identity: clientIdentity, invite: invite, secret: clientSecret,
+            connector: LoopbackClientConnector(port: port), configuration: .loopback
+        )
+        let room1 = ActiveRoom(
+            session: session1, storage: storage,
+            localPeerID: clientIdentity.peerID, invite: invite, sessionID: nil
+        )
+        let probe1 = EventProbe<RoomEvent>(stream: room1.events)
+        Task { await session1.start() }
+        await room1.start()
+
+        _ = try await probe1.waitFor(timeout: .seconds(10)) {
+            if case .stateChanged(.active) = $0 { return true }; return false
+        }
+
+        // Клиент отправляет сообщение
+        try await room1.send(text: "До обрыва")
+        _ = try await probe1.waitFor(timeout: .seconds(5)) {
+            if case .messageAppended(let m) = $0 { return m.text == "До обрыва" }; return false
+        }
+
+        // Клиент уходит
+        await room1.leave()
+        _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
+            if case .notice(.left) = $0 { return true }; return false
+        }
+
+        // Второе подключение (повторный вход) с тем же приглашением и тем же clientIdentity
+        let session2 = ClientSession(
+            identity: clientIdentity, invite: invite, secret: clientSecret,
+            connector: LoopbackClientConnector(port: port), configuration: .loopback
+        )
+        let room2 = ActiveRoom(
+            session: session2, storage: storage,
+            localPeerID: clientIdentity.peerID, invite: invite, sessionID: nil
+        )
+        let probe2 = EventProbe<RoomEvent>(stream: room2.events)
+        Task { await session2.start() }
+        await room2.start()
+
+        // Первое значимое событие — messagesRestored с «До обрыва»
+        let restored = try await probe2.waitFor(timeout: .seconds(10)) {
+            if case .messagesRestored = $0 { return true }; return false
+        }
+        guard case .messagesRestored(let messages, _) = restored else {
+            Issue.record("Expected .messagesRestored as first significant event"); return
+        }
+        #expect(messages.contains { $0.text == "До обрыва" },
+                "saved message must appear in messagesRestored")
+
+        // Хост снова видит клиента
+        _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
+            if case .participantsChanged(let ps) = $0 {
+                return ps.contains { $0.id == clientIdentity.peerID }
+            }
+            return false
+        }
+
+        // В хранилище клиента ровно одна сессия с хостом (повторный вход — та же сессия)
+        let sessions = try await storage.sessions(withPeer: hostIdentity.peerID)
+        #expect(sessions.count == 1, "client must have exactly one session with host after rejoin")
     }
 }
