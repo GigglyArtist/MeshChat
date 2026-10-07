@@ -5,12 +5,22 @@ import Foundation
 @testable import MeshChat
 
 /// Фейковый `RoomServicing` для тестов UI-слоя.
-nonisolated struct FakeRoomService: RoomServicing {
+///
+/// Мутируемый счётчик вызовов защищён `NSLock` — отсюда `@unchecked Sendable`.
+final class FakeRoomService: RoomServicing, @unchecked Sendable {
 
     let createdRoom: FakeActiveRoom
     let joinedRoom: FakeActiveRoom
     let createError: RoomError?
     let joinError: RoomError?
+
+    private let lock = NSLock()
+    // nonisolated(unsafe): доступ из nonisolated-методов, безопасность гарантирует lock.
+    nonisolated(unsafe) private var _joinCallCount = 0
+    nonisolated(unsafe) private var _lastJoinedInvite: RoomInvite?
+
+    var joinCallCount: Int { lock.withLock { _joinCallCount } }
+    var lastJoinedInvite: RoomInvite? { lock.withLock { _lastJoinedInvite } }
 
     init(
         createRoom: FakeActiveRoom = FakeActiveRoom(role: .host),
@@ -30,6 +40,10 @@ nonisolated struct FakeRoomService: RoomServicing {
     }
 
     nonisolated func joinRoom(invite: RoomInvite) async throws -> any ActiveRoomHandling {
+        lock.withLock {
+            _joinCallCount += 1
+            _lastJoinedInvite = invite
+        }
         if let e = joinError { throw e }
         return joinedRoom
     }

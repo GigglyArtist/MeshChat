@@ -225,4 +225,139 @@ struct ChatViewModelTests {
         await vm.appDidBecomeActive()
         #expect(room.appDidBecomeActiveCount == 1)
     }
+
+    // MARK: 10. messagesRestored → уведомление и сообщения в ленте
+
+    @Test("messagesRestored inserts divider notice then messages with correct author names")
+    func messagesRestoredAddsFeed() async throws {
+        let localID = UUID()
+        let peerID = UUID()
+        let room = FakeActiveRoom(role: .client, localPeerID: localID)
+        let peer = PeerProfile(id: peerID, nickname: "Alice")
+        let vm = ChatViewModel(room: room, localNickname: "Я")
+        vm.start()
+
+        let t1 = Date(timeIntervalSince1970: 100).flooredToMilliseconds
+        let t2 = Date(timeIntervalSince1970: 200).flooredToMilliseconds
+        let m1 = ChatMessage(id: UUID(), text: "от Alice", timestamp: t1, senderID: peerID)
+        let m2 = ChatMessage(id: UUID(), text: "от меня",  timestamp: t2, senderID: localID)
+        room.emit(.messagesRestored([m1, m2], knownPeers: [peer]))
+
+        try await waitUntil { vm.items.count == 3 }
+
+        if case .notice(_, let text) = vm.items[0] {
+            #expect(text == "Ранее в этой комнате")
+        } else {
+            Issue.record("Expected notice as items[0], got \(vm.items[0])")
+        }
+        if case .message(let m, let isOut, let name) = vm.items[1] {
+            #expect(m.id == m1.id)
+            #expect(!isOut)
+            #expect(name == "Alice")
+        } else {
+            Issue.record("Expected .message for m1")
+        }
+        if case .message(let m, let isOut, let name) = vm.items[2] {
+            #expect(m.id == m2.id)
+            #expect(isOut)
+            #expect(name == "Вы")
+        } else {
+            Issue.record("Expected .message for m2")
+        }
+    }
+
+    // MARK: 11. canRejoin зависит от причины завершения
+
+    @Test("canRejoin is true for reconnectable end reasons",
+          arguments: [SessionEndReason.hostLost, .hostUnreachable, .handshakeTimeout])
+    func canRejoinTrueForReason(reason: SessionEndReason) async throws {
+        let invite = RoomInvite(version: 1, serviceName: UUID().uuidString,
+                                roomKey: Data(repeating: 0xAB, count: 32))
+        let room = FakeActiveRoom(role: .client)
+        let vm = ChatViewModel(room: room, localNickname: "Я",
+                               rejoinInvite: invite, rooms: FakeRoomService())
+        vm.start()
+        room.emit(.stateChanged(.ended(reason)))
+        try await waitUntil { if case .ended = vm.sessionState { return true }; return false }
+        #expect(vm.canRejoin)
+    }
+
+    @Test("canRejoin is false for intentional end reasons",
+          arguments: [SessionEndReason.hostEnded, .leftByUser, .rejected])
+    func canRejoinFalseForReason(reason: SessionEndReason) async throws {
+        let invite = RoomInvite(version: 1, serviceName: UUID().uuidString,
+                                roomKey: Data(repeating: 0xAB, count: 32))
+        let room = FakeActiveRoom(role: .client)
+        let vm = ChatViewModel(room: room, localNickname: "Я",
+                               rejoinInvite: invite, rooms: FakeRoomService())
+        vm.start()
+        room.emit(.stateChanged(.ended(reason)))
+        try await waitUntil { if case .ended = vm.sessionState { return true }; return false }
+        #expect(!vm.canRejoin)
+    }
+
+    @Test("canRejoin is false without rejoinInvite (host)")
+    func canRejoinFalseWithoutInvite() async throws {
+        let (vm, room) = makeViewModel(role: .host)
+        vm.start()
+        room.emit(.stateChanged(.ended(.hostLost)))
+        try await waitUntil { if case .ended = vm.sessionState { return true }; return false }
+        #expect(!vm.canRejoin)
+    }
+
+    // MARK: 12. Успешный rejoin()
+
+    @Test("successful rejoin() calls rooms.joinRoom once and sets rejoinedRoute")
+    func rejoinSuccessSetsRoute() async throws {
+        let invite = RoomInvite(version: 1, serviceName: UUID().uuidString,
+                                roomKey: Data(repeating: 0xAB, count: 32))
+        let service = FakeRoomService()
+        let room = FakeActiveRoom(role: .client)
+        let vm = ChatViewModel(room: room, localNickname: "Я",
+                               rejoinInvite: invite, rooms: service)
+        vm.start()
+        room.emit(.stateChanged(.ended(.hostLost)))
+        try await waitUntil { vm.canRejoin }
+
+        await vm.rejoin()
+
+        #expect(service.joinCallCount == 1)
+        #expect(service.lastJoinedInvite == invite)
+        #expect(vm.rejoinedRoute != nil)
+        #expect(vm.rejoinedRoute?.rejoinInvite == invite)
+    }
+
+    // MARK: 13. Ошибка rejoin()
+
+    @Test("rejoin() error sets sendError and restores canRejoin")
+    func rejoinErrorSetsMessage() async throws {
+        let invite = RoomInvite(version: 1, serviceName: UUID().uuidString,
+                                roomKey: Data(repeating: 0xAB, count: 32))
+        let service = FakeRoomService(joinError: .nicknameMissing)
+        let room = FakeActiveRoom(role: .client)
+        let vm = ChatViewModel(room: room, localNickname: "Я",
+                               rejoinInvite: invite, rooms: service)
+        vm.start()
+        room.emit(.stateChanged(.ended(.hostLost)))
+        try await waitUntil { vm.canRejoin }
+
+        await vm.rejoin()
+
+        #expect(vm.sendError == "Не удалось подключиться к комнате")
+        #expect(vm.rejoinedRoute == nil)
+        #expect(vm.canRejoin)
+    }
+
+    // MARK: 14. participantCountTitle склоняется правильно
+
+    @Test("participantCountTitle counts self plus remote participants",
+          arguments: zip([0, 1, 4], ["1 участник", "2 участника", "5 участников"]))
+    func participantCountTitle(peerCount: Int, expected: String) async throws {
+        let (vm, room) = makeViewModel()
+        vm.start()
+        let profiles = (0..<peerCount).map { _ in PeerProfile(id: UUID(), nickname: "Peer") }
+        room.emit(.participantsChanged(profiles))
+        try await waitUntil { vm.participants.count == peerCount }
+        #expect(vm.participantCountTitle == expected)
+    }
 }

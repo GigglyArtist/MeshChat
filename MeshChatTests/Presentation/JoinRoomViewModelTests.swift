@@ -105,4 +105,19 @@ struct JoinRoomViewModelTests {
         }
         #expect(vm.joinedRoom == nil)
     }
+
+    // MARK: 4. joinedRoute содержит то же приглашение, что было отсканировано
+
+    @Test("after successful join, joinedRoute carries the scanned invite")
+    func joinedRouteContainsSameInvite() async throws {
+        let invite = RoomInvite(version: 1, serviceName: goldenServiceName, roomKey: goldenRoomKey)
+        let payload = try invite.qrPayload()
+        let vm = makeViewModel()
+        await vm.prepare()
+        vm.handleScan(payload)
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(vm.joinedRoute != nil)
+        #expect(vm.joinedRoute?.rejoinInvite == invite)
+    }
 }
