@@ -42,7 +42,7 @@ struct ChatView: View {
                 )
             }
         }
-        .navigationTitle(viewModel.role == .host ? "Комната (хост)" : "Комната")
+        .navigationTitle(viewModel.participantCountTitle)
         .navigationBarBackButtonHidden(true)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarItems }

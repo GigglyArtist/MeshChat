@@ -49,6 +49,13 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
         return MessageTextPolicy.normalize(draft) != nil
     }
 
+    /// Счётчик участников вместе с собой: «1 участник», «3 участника», «5 участников» (§12.1.1).
+    var participantCountTitle: String {
+        let count = participants.count + 1
+        let word = RussianPlural.word(for: count, one: "участник", few: "участника", many: "участников")
+        return "\(count) \(word)"
+    }
+
     /// Роль — хост или клиент (влияет на надпись кнопки выхода).
     var role: SessionRole { room.role }
     /// QR-приглашение: только у хоста.
@@ -144,8 +151,14 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
         case .notice(let notice):
             items.append(.notice(id: UUID(), text: noticeText(notice)))
 
-        case .messagesRestored:
-            break
+        case .messagesRestored(let messages, let knownPeers):
+            for p in knownPeers { peerNames[p.id] = p.nickname }
+            items.append(.notice(id: UUID(), text: "Ранее в этой комнате"))
+            for message in messages {
+                let isOutgoing = message.senderID == room.localPeerID
+                let name = isOutgoing ? "Вы" : (peerNames[message.senderID] ?? "Неизвестный")
+                items.append(.message(message, isOutgoing: isOutgoing, authorName: name))
+            }
         }
     }
 
