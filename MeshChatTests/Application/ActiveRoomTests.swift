@@ -228,4 +228,107 @@ struct ActiveRoomTests {
         await room.appDidBecomeActive()
         #expect(session.resumeAfterForegroundCount == 1)
     }
+
+    // MARK: 9. established с историей → messagesRestored до participantsChanged
+
+    @Test("established with pre-existing messages emits messagesRestored before participantsChanged")
+    func rejoinEmitsMessagesRestored() async throws {
+        let storage = try makeStorage()
+        let sid = UUID()
+        let peerID = UUID()
+        let peer = PeerProfile(id: peerID, nickname: "Alice")
+
+        // Подготовить сессию и участника в хранилище
+        try await storage.createSession(id: sid, role: .client, createdAt: Date())
+        try await storage.upsertPeer(peer, seenAt: Date())
+        try await storage.addParticipant(peerID: peerID, toSession: sid)
+
+        let t1 = Date(timeIntervalSince1970: 100).flooredToMilliseconds
+        let t2 = Date(timeIntervalSince1970: 200).flooredToMilliseconds
+        let m1 = ChatMessage(id: UUID(), text: "first",  timestamp: t1, senderID: peerID)
+        let m2 = ChatMessage(id: UUID(), text: "second", timestamp: t2, senderID: localID)
+        try await storage.saveMessage(m1, inSession: sid)
+        try await storage.saveMessage(m2, inSession: sid)
+
+        let session = FakeChatSession(role: .client, senderID: localID)
+        let room = ActiveRoom(session: session, storage: storage,
+                              localPeerID: localID, invite: nil, sessionID: nil)
+        let probe = EventProbe<RoomEvent>(stream: room.events)
+        await room.start()
+
+        let host = PeerProfile(id: UUID(), nickname: "Host")
+        session.emit(.established(sessionID: sid))
+        session.emit(.participantJoined(host))
+
+        // Ждём participantsChanged, чтобы убедиться: established полностью обработан
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
+            if case .participantsChanged = $0 { return true }; return false
+        }
+
+        // messagesRestored должен быть первым событием
+        guard !probe.events.isEmpty else {
+            Issue.record("probe.events is empty"); return
+        }
+        if case .messagesRestored(let messages, let knownPeers) = probe.events[0] {
+            #expect(messages.count == 2)
+            #expect(messages[0].text == "first")
+            #expect(messages[1].text == "second")
+            #expect(knownPeers.contains { $0.id == peerID })
+        } else {
+            Issue.record("Expected .messagesRestored as first event, got \(probe.events[0])")
+        }
+    }
+
+    // MARK: 10. Новая сессия — messagesRestored не выдаётся
+
+    @Test("established with no pre-existing messages does not emit messagesRestored")
+    func newSessionNoMessagesRestored() async throws {
+        let storage = try makeStorage()
+        let (room, session) = makeRoom(role: .client, sessionID: nil, storage: storage)
+        let probe = EventProbe<RoomEvent>(stream: room.events)
+        await room.start()
+
+        let sid = UUID()
+        let host = PeerProfile(id: UUID(), nickname: "Host")
+        session.emit(.established(sessionID: sid))
+        session.emit(.participantJoined(host))
+
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
+            if case .participantsChanged = $0 { return true }; return false
+        }
+
+        // Небольшая пауза, чтобы дать шанс любому лишнему событию появиться
+        try await Task.sleep(for: .milliseconds(200))
+
+        let restored = probe.events.filter {
+            if case .messagesRestored = $0 { return true }; return false
+        }
+        #expect(restored.isEmpty, "no messagesRestored expected for a fresh session")
+    }
+
+    // MARK: 11. Ошибка хранилища при загрузке сообщений — чат продолжает работу
+
+    @Test("storage error on messages load does not break chat")
+    func storageErrorOnMessagesDoesNotBreakChat() async throws {
+        let session = FakeChatSession(role: .client, senderID: localID)
+        // FailingStorage: createSession бросает, messages возвращает []
+        let room = ActiveRoom(session: session, storage: FailingStorage(),
+                              localPeerID: localID, invite: nil, sessionID: nil)
+        let probe = EventProbe<RoomEvent>(stream: room.events)
+        await room.start()
+
+        let host = PeerProfile(id: UUID(), nickname: "Host")
+        session.emit(.established(sessionID: UUID()))
+        session.emit(.participantJoined(host))
+
+        // participantsChanged должен дойти несмотря на ошибки хранилища
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
+            if case .participantsChanged = $0 { return true }; return false
+        }
+
+        let restored = probe.events.filter {
+            if case .messagesRestored = $0 { return true }; return false
+        }
+        #expect(restored.isEmpty, "FailingStorage.messages returns [] so no restore expected")
+    }
 }
