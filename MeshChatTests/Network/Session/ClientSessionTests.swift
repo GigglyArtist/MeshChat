@@ -269,6 +269,47 @@ struct ClientSessionTests {
 
     // MARK: 12. end() отправляет leave и переходит в ended(.leftByUser)
 
+    // MARK: 13. leave() после ended(.hostLost) завершается немедленно
+
+    @Test("leave() after ended(.hostLost) completes without hanging and sends no new packets")
+    func leaveAfterHostLost() async throws {
+        let (session, _, connector) = makeSession(configuration: .reliabilityShortGrace)
+        let probe = EventProbe<SessionEvent>(stream: session.events)
+        let serverConn = try await handshake(session: session, connector: connector, probe: probe)
+
+        // Доводим сессию до ended(.hostLost)
+        connector.setMode(.unreachable)
+        serverConn.emitFailure()
+        _ = try await probe.waitFor(timeout: .seconds(5)) {
+            if case .stateChanged(.ended(.hostLost)) = $0 { return true }; return false
+        }
+
+        // Фиксируем число отправленных пакетов до вызова leave()
+        let sentBefore = connector.clientConnections.map(\.sentPackets.count).reduce(0, +)
+
+        // Вызываем leave() в отдельной задаче и ждём завершения (не должна зависнуть)
+        let lock = NSLock()
+        nonisolated(unsafe) var leaveFinished = false
+        Task { await session.end(); lock.withLock { leaveFinished = true } }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if lock.withLock({ leaveFinished }) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(lock.withLock { leaveFinished }, "leave() не завершилась за 5 секунд")
+
+        // После ended новых пакетов не отправлено
+        let sentAfter = connector.clientConnections.map(\.sentPackets.count).reduce(0, +)
+        #expect(sentBefore == sentAfter, "leave() не должна отправлять пакеты из ended-состояния")
+
+        // В потоке событий ровно одно stateChanged(.ended)
+        try await Task.sleep(for: .milliseconds(100))
+        let endedCount = probe.events.filter {
+            if case .stateChanged(.ended) = $0 { return true }; return false
+        }.count
+        #expect(endedCount == 1, "должно быть ровно одно stateChanged(.ended)")
+    }
+
     @Test("end() → sends .leave and transitions to ended(.leftByUser)")
     func endSendsLeave() async throws {
         let (session, _, connector) = makeSession()
