@@ -28,23 +28,31 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
     nonisolated(unsafe) private var continuation: AsyncStream<SessionEvent>.Continuation?
     nonisolated(unsafe) private var _sentTexts: [String] = []
     nonisolated(unsafe) private var _resumeAfterForegroundCount: Int = 0
+    nonisolated(unsafe) private var _endCount: Int = 0
     /// Если задана — `send(text:)` бросает эту ошибку вместо успеха.
     // nonisolated(unsafe): доступ из nonisolated-методов, безопасность гарантирует lock.
     nonisolated(unsafe) var sendError: (any Error)?
+
+    /// Необязательный журнал вызовов для тестов порядка событий (только тестовый код).
+    private let callLog: RoomServiceCallLog?
 
     // MARK: - Наблюдаемые свойства для тестов
 
     var sentTexts: [String] { lock.withLock { _sentTexts } }
     var resumeAfterForegroundCount: Int { lock.withLock { _resumeAfterForegroundCount } }
+    /// Число вызовов `end()` на этой сессии.
+    nonisolated var endCount: Int { lock.withLock { _endCount } }
 
     // MARK: - Инициализация
 
     init(role: SessionRole = .client,
          sessionID: UUID = UUID(),
-         senderID: UUID = UUID()) {
+         senderID: UUID = UUID(),
+         callLog: RoomServiceCallLog? = nil) {
         self.role = role
         self.sessionID = sessionID
         self.senderID = senderID
+        self.callLog = callLog
         let roomKey = Data(repeating: 0xAB, count: 32)
         self.invite = RoomInvite(version: RoomInvite.currentVersion,
                                  serviceName: UUID().uuidString,
@@ -82,7 +90,12 @@ final class FakeChatSession: HostSessionManaging, @unchecked Sendable {
     }
 
     nonisolated func end() async {
-        lock.withLock { continuation?.finish(); continuation = nil }
+        callLog?.append("sessionEnded")
+        lock.withLock {
+            _endCount += 1
+            continuation?.finish()
+            continuation = nil
+        }
     }
 
     nonisolated func resumeAfterForeground() async {

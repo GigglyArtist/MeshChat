@@ -15,6 +15,13 @@ final class FakeMeshNetworking: MeshNetworking, @unchecked Sendable {
     private var _hostSessions: [FakeChatSession] = []
     private var _clientSessions: [FakeChatSession] = []
 
+    /// Общий журнал вызовов для проверки порядка событий в тестах порядка (ADR-13).
+    let callLog: RoomServiceCallLog
+
+    init(callLog: RoomServiceCallLog = RoomServiceCallLog()) {
+        self.callLog = callLog
+    }
+
     /// Все хост-сессии, созданные через `makeHostSession`, в порядке создания.
     var hostSessions: [FakeChatSession] { lock.withLock { _hostSessions } }
 
@@ -25,7 +32,8 @@ final class FakeMeshNetworking: MeshNetworking, @unchecked Sendable {
         identity: LocalIdentity,
         secret: any RoomSecret
     ) -> any HostSessionManaging {
-        let session = FakeChatSession(role: .host, senderID: identity.peerID)
+        callLog.append("makeHostSession")
+        let session = FakeChatSession(role: .host, senderID: identity.peerID, callLog: callLog)
         lock.withLock { _hostSessions.append(session) }
         return session
     }
@@ -35,7 +43,8 @@ final class FakeMeshNetworking: MeshNetworking, @unchecked Sendable {
         invite: RoomInvite,
         secret: any RoomSecret
     ) -> any ChatSessionManaging {
-        let session = FakeChatSession(role: .client, senderID: identity.peerID)
+        callLog.append("makeClientSession")
+        let session = FakeChatSession(role: .client, senderID: identity.peerID, callLog: callLog)
         lock.withLock { _clientSessions.append(session) }
         return session
     }

@@ -27,6 +27,20 @@ struct RoomServiceTests {
         return (service, network)
     }
 
+    func makeServiceWithLog(_ log: RoomServiceCallLog) -> (RoomService, FakeMeshNetworking) {
+        let id = makeIdentity()
+        let network = FakeMeshNetworking(callLog: log)
+        let secrets = RoomCredentialsFactory()
+        let service = RoomService(identity: id, secrets: secrets, network: network, storage: FailingStorage())
+        return (service, network)
+    }
+
+    func makeInvite() -> RoomInvite {
+        RoomInvite(version: RoomInvite.currentVersion,
+                   serviceName: UUID().uuidString,
+                   roomKey: Data(repeating: 0xAB, count: 32))
+    }
+
     // MARK: 1. createRoom → host room, has invite
 
     @Test("createRoom returns host room with invite set")
@@ -113,6 +127,83 @@ struct RoomServiceTests {
         _ = try await service.joinRoom(invite: invite)
         #expect(network.clientSessions.count == 1)
         #expect(network.hostSessions.isEmpty)
+    }
+
+    // MARK: 9. Второй joinRoom покидает первую комнату до создания новой сессии (ADR-13)
+
+    @Test("second joinRoom leaves first room before creating new client session")
+    func secondJoinRoomLeavesFirstBeforeNewSession() async throws {
+        let log = RoomServiceCallLog()
+        let (service, network) = makeServiceWithLog(log)
+        let invite = makeInvite()
+
+        _ = try await service.joinRoom(invite: invite)
+        _ = try await service.joinRoom(invite: invite)
+
+        let entries = log.entries
+        // Должно быть ровно два makeClientSession и ровно один sessionEnded
+        let makeCSIndices = entries.indices.filter { entries[$0] == "makeClientSession" }
+        let endedIndices  = entries.indices.filter { entries[$0] == "sessionEnded" }
+        #expect(makeCSIndices.count == 2, "ожидается два makeClientSession")
+        #expect(endedIndices.count  == 1, "ожидается один sessionEnded")
+        // sessionEnded должен быть между первым и вторым makeClientSession
+        let firstMakeCS  = try #require(makeCSIndices.first)
+        let secondMakeCS = try #require(makeCSIndices.last)
+        let leaveIdx     = try #require(endedIndices.first)
+        #expect(leaveIdx > firstMakeCS,  "leave должна быть после создания первой сессии")
+        #expect(leaveIdx < secondMakeCS, "leave должна быть до создания второй сессии")
+        // Первая сессия покинута ровно один раз
+        #expect(network.clientSessions[0].endCount == 1, "первая сессия покинута ровно один раз")
+    }
+
+    // MARK: 10. createRoom после joinRoom покидает клиентскую комнату (ADR-13)
+
+    @Test("createRoom after joinRoom leaves client room before creating host session")
+    func createRoomAfterJoinRoomLeavesClientRoom() async throws {
+        let log = RoomServiceCallLog()
+        let (service, network) = makeServiceWithLog(log)
+        let invite = makeInvite()
+
+        _ = try await service.joinRoom(invite: invite)
+        _ = try await service.createRoom(password: "pass")
+
+        let entries = log.entries
+        let makeCSIdx  = entries.firstIndex(of: "makeClientSession")
+        let endedIdx   = entries.firstIndex(of: "sessionEnded")
+        let makeHSIdx  = entries.firstIndex(of: "makeHostSession")
+        #expect(makeCSIdx  != nil, "ожидается makeClientSession")
+        #expect(endedIdx   != nil, "ожидается sessionEnded")
+        #expect(makeHSIdx  != nil, "ожидается makeHostSession")
+        #expect(endedIdx! < makeHSIdx!, "leave должна быть до makeHostSession")
+        #expect(network.clientSessions[0].endCount == 1, "клиентская сессия покинута ровно один раз")
+    }
+
+    // MARK: 11. Ошибка до создания сессии не трогает текущую комнату (ADR-13)
+
+    @Test("failed joinRoom before leaveCurrent does not touch current room")
+    func failedJoinRoomDoesNotTouchCurrentRoom() async throws {
+        let log = RoomServiceCallLog()
+        let (service, network) = makeServiceWithLog(log)
+        let invite = makeInvite()
+
+        _ = try await service.joinRoom(invite: invite)
+
+        // Второй вызов с заведомо неверным ключом (не 32 байта) — бросает до leaveCurrent()
+        let badInvite = RoomInvite(version: RoomInvite.currentVersion,
+                                   serviceName: UUID().uuidString,
+                                   roomKey: Data([0x01]))
+        do {
+            _ = try await service.joinRoom(invite: badInvite)
+            Issue.record("Ожидалась ошибка для невалидного приглашения")
+        } catch {
+            // expected
+        }
+
+        // Первая сессия не тронута
+        #expect(network.clientSessions.count == 1, "вторая сессия не должна создаваться")
+        #expect(network.clientSessions[0].endCount == 0, "первая сессия не должна быть покинута")
+        let endedEntries = log.entries.filter { $0 == "sessionEnded" }
+        #expect(endedEntries.isEmpty, "журнал не должен содержать sessionEnded")
     }
 
     // MARK: 8. createRoom: session is created in storage

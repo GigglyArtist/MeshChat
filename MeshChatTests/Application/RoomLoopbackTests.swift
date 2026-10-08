@@ -5,6 +5,35 @@ import Testing
 import Foundation
 @testable import MeshChat
 
+/// Фейковая реализация `MeshNetworking` для loopback-тестов через `127.0.0.1`.
+///
+/// Все поля неизменяемые — `@unchecked Sendable` безопасен.
+final class LoopbackMeshNetworking: MeshNetworking, @unchecked Sendable {
+
+    private let port: UInt16
+    private let configuration: NetworkConfiguration
+
+    init(port: UInt16, configuration: NetworkConfiguration = .loopback) {
+        self.port = port
+        self.configuration = configuration
+    }
+
+    func makeHostSession(identity: LocalIdentity, secret: any RoomSecret) -> any HostSessionManaging {
+        fatalError("LoopbackMeshNetworking: makeHostSession не используется в loopback-тестах клиента")
+    }
+
+    func makeClientSession(
+        identity: LocalIdentity,
+        invite: RoomInvite,
+        secret: any RoomSecret
+    ) -> any ChatSessionManaging {
+        ClientSession(
+            identity: identity, invite: invite, secret: secret,
+            connector: LoopbackClientConnector(port: port), configuration: configuration
+        )
+    }
+}
+
 /// Сквозные тесты Application-слоя: два `ActiveRoom` через общее хранилище.
 ///
 /// `@MainActor` нужен: `ActiveRoom.init` выводится как `@MainActor`-изолированный
@@ -216,5 +245,107 @@ struct RoomLoopbackTests {
         // В хранилище клиента ровно одна сессия с хостом (повторный вход — та же сессия)
         let sessions = try await storage.sessions(withPeer: hostIdentity.peerID)
         #expect(sessions.count == 1, "client must have exactly one session with host after rejoin")
+    }
+
+    // MARK: 4. Повторный вход без выхода: у хоста одно соединение устройства (ADR-13)
+
+    /// Клиент вызывает `joinRoom` дважды без `first.leave()`.
+    /// `ActiveRoomRegistry` должен покинуть первую комнату до создания второй сессии.
+    /// После fix: хост видит ровно одного участника; у `first` — `ended(.leftByUser)`.
+    /// До fix: первая комната остаётся, создаётся вторая сессия с тем же `peerID`,
+    /// хост вытесняет их по очереди → соединение «скачет».
+    @Test("rejoin without leave: host has exactly one client connection after second joinRoom")
+    func rejoinWithoutLeave() async throws {
+        let storage = try makeStorage()
+        let secret = try makeSecret()
+        let hostIdentity = LocalIdentity.makeTest(nickname: "Host")
+        let clientIdentity = LocalIdentity.makeTest(nickname: "Client")
+
+        // Запускаем хоста через реальный listener
+        let tap = ListenerTap()
+        let hostSession = HostSession(
+            identity: hostIdentity, secret: secret,
+            listener: tap, configuration: .loopback
+        )
+        try await storage.createSession(id: hostSession.sessionID, role: .host, createdAt: Date())
+        let hostRoom = ActiveRoom(
+            session: hostSession, storage: storage,
+            localPeerID: hostIdentity.peerID, invite: hostSession.invite,
+            sessionID: hostSession.sessionID
+        )
+        let hostProbe = EventProbe<RoomEvent>(stream: hostRoom.events)
+        await hostRoom.start()
+
+        _ = try await hostProbe.waitFor(timeout: .seconds(10)) {
+            if case .stateChanged(.active) = $0 { return true }; return false
+        }
+        let port = try await tap.waitForPort()
+        let invite = hostSession.invite
+
+        // RoomService для одного устройства-клиента
+        let fakeIdentity = FakeIdentityProvider(nickname: clientIdentity.nickname)
+        // Предзахват peerID: permanentPeerID() бросает, но FakeIdentityProvider всегда успешен
+        let clientPeerID = try fakeIdentity.permanentPeerID()
+        let loopbackNet = LoopbackMeshNetworking(port: port)
+        let clientSecrets = RoomCredentialsFactory()
+        let clientService = RoomService(
+            identity: fakeIdentity, secrets: clientSecrets,
+            network: loopbackNet, storage: storage
+        )
+
+        // Первое подключение клиента
+        let first = try await clientService.joinRoom(invite: invite)
+        let firstProbe = EventProbe<RoomEvent>(stream: first.events)
+
+        _ = try await hostProbe.waitFor(timeout: .seconds(10)) {
+            if case .participantsChanged(let ps) = $0 {
+                return ps.contains { $0.id == clientPeerID }
+            }; return false
+        }
+
+        // Второе подключение БЕЗ явного first.leave() — реестр должен сам вызвать leave()
+        let second = try await clientService.joinRoom(invite: invite)
+        let secondProbe = EventProbe<RoomEvent>(stream: second.events)
+
+        // Ожидание: first получает ended(.leftByUser)
+        _ = try await firstProbe.waitFor(timeout: .seconds(5)) {
+            if case .stateChanged(.ended(.leftByUser)) = $0 { return true }; return false
+        }
+
+        // Ожидание: second достигает .active
+        _ = try await secondProbe.waitFor(timeout: .seconds(10)) {
+            if case .stateChanged(.active) = $0 { return true }; return false
+        }
+
+        // Ожидание: хост видит уход первого участника, затем одного участника снова
+        _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
+            if case .notice(.left) = $0 { return true }; return false
+        }
+        _ = try await hostProbe.waitFor(timeout: .seconds(5)) {
+            if case .participantsChanged(let ps) = $0 {
+                return ps.filter { $0.id == clientPeerID }.count == 1
+            }; return false
+        }
+
+        // Сессия стабилизировалась — запоминаем число событий до окна наблюдения.
+        // Проверяем только новые события: уход first и reconnecting до этой точки ожидаемы.
+        let stableHostCount = hostProbe.events.count
+        let stableSecondCount = secondProbe.events.count
+
+        // Окно «ничего не произошло»: reconnectBackoff(.loopback) = 200 мс + 1 с = 1.2 с
+        // За это время у second не должно быть .reconnecting; хост не должен потерять клиента
+        try await Task.sleep(for: .milliseconds(1200))
+
+        let secondHasReconnecting = secondProbe.events.dropFirst(stableSecondCount).contains {
+            if case .stateChanged(.reconnecting) = $0 { return true }; return false
+        }
+        #expect(!secondHasReconnecting, "second не должна входить в .reconnecting")
+
+        let hostLostClient = hostProbe.events.dropFirst(stableHostCount).contains {
+            if case .participantsChanged(let ps) = $0 {
+                return !ps.contains { $0.id == clientPeerID }
+            }; return false
+        }
+        #expect(!hostLostClient, "хост не должен терять клиента после успешного повторного входа")
     }
 }
