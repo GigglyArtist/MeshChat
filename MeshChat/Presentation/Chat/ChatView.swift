@@ -70,7 +70,7 @@ struct ChatView: View {
             if newPhase == .active { Task { await viewModel.appDidBecomeActive() } }
         }
         .onChange(of: viewModel.sessionState) { _, newState in
-            if case .ended(.leftByUser) = newState { onLeave() }
+            if case .ended(.leftByUser) = newState { viewModel.exitToHome(); onLeave() }
         }
         .onChange(of: viewModel.rejoinedRoute) { _, route in
             if let route { onRejoined(route) }
@@ -115,7 +115,7 @@ struct ChatView: View {
     private var toolbarItems: some ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
             if case .ended(let reason) = viewModel.sessionState, reason != .leftByUser {
-                Button("Закрыть") { onLeave() }
+                Button("Закрыть") { viewModel.exitToHome(); onLeave() }
             } else if !viewModel.isEnded {
                 Button(viewModel.role == .host ? "Завершить" : "Выйти") {
                     showLeaveConfirmation = true

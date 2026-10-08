@@ -348,7 +348,57 @@ struct ChatViewModelTests {
         #expect(vm.canRejoin)
     }
 
-    // MARK: 14. participantCountTitle склоняется правильно
+    // MARK: 14. Успешный rejoin() сбрасывает спиннер
+
+    @Test("successful rejoin() resets isRejoining to false")
+    func rejoinSuccessClearsSpinner() async throws {
+        let invite = RoomInvite(version: 1, serviceName: UUID().uuidString,
+                                roomKey: Data(repeating: 0xAB, count: 32))
+        let service = FakeRoomService()
+        let room = FakeActiveRoom(role: .client)
+        let vm = ChatViewModel(room: room, localNickname: "Я",
+                               rejoinInvite: invite, rooms: service)
+        vm.start()
+        room.emit(.stateChanged(.ended(.hostLost)))
+        try await waitUntil { vm.canRejoin }
+
+        await vm.rejoin()
+
+        #expect(!vm.isRejoining, "spinner must clear on success")
+    }
+
+    // MARK: 15. Уход с экрана во время rejoin → осиротевшая комната покидается
+
+    @Test("exitToHome() before rejoin completes causes rejoin() to leave the new room")
+    func exitDuringRejoinLeavesOrphanedRoom() async throws {
+        let invite = RoomInvite(version: 1, serviceName: UUID().uuidString,
+                                roomKey: Data(repeating: 0xAB, count: 32))
+        let service = FakeRoomService()
+        service.enableJoinGate()
+        let room = FakeActiveRoom(role: .client)
+        let vm = ChatViewModel(room: room, localNickname: "Я",
+                               rejoinInvite: invite, rooms: service)
+        vm.start()
+        room.emit(.stateChanged(.ended(.hostLost)))
+        try await waitUntil { vm.canRejoin }
+
+        // Запускаем rejoin в фоне — он зависнет на gate внутри joinRoom
+        let rejoinTask = Task { await vm.rejoin() }
+
+        // Ждём, пока joinRoom заблокируется, затем имитируем уход с экрана
+        await service.waitForJoinBlocked()
+        vm.exitToHome()
+
+        // Разблокируем joinRoom — он вернёт joinedRoom
+        service.releaseJoin()
+        await rejoinTask.value
+
+        // Осиротевшая комната должна быть покинута; навигация не должна происходить
+        #expect(service.joinedRoom.leaveCount == 1, "orphaned room must be left")
+        #expect(vm.rejoinedRoute == nil, "screen is gone — no navigation")
+    }
+
+    // MARK: 16. participantCountTitle склоняется правильно
 
     @Test("participantCountTitle counts self plus remote participants",
           arguments: zip([0, 1, 4], ["1 участник", "2 участника", "5 участников"]))

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 MeshChat contributors
 
 import SwiftUI
+import UIKit
 
 /// Корневой контейнер: выбирает между онбордингом и главным экраном (§12.1).
 struct RootView: View {
@@ -48,6 +49,7 @@ struct RootView: View {
                         viewModel.navigateToChat(route: route)
                     }
                 case .chat(let chatRoute):
+                    // .id(chatRoute) гарантирует свежий View и ViewModel при смене комнаты (rejoin).
                     ChatView(
                         room: chatRoute.room,
                         localNickname: localNickname,
@@ -56,6 +58,7 @@ struct RootView: View {
                         onLeave: { viewModel.navigationPath.removeAll() },
                         onRejoined: { route in viewModel.navigationPath = [.chat(route)] }
                     )
+                    .id(chatRoute)
                 case .history:
                     PeersListView(history: environment.history) { peer in
                         viewModel.navigate(to: .peerHistory(peer))
@@ -72,6 +75,10 @@ struct RootView: View {
                     )
                 }
             }
+        }
+        .onChange(of: viewModel.navigationPath) { _, path in
+            let inChat = path.contains { if case .chat = $0 { return true }; return false }
+            UIApplication.shared.isIdleTimerDisabled = inChat
         }
     }
 }

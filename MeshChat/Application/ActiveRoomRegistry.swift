@@ -17,7 +17,7 @@ actor ActiveRoomRegistry {
         subsystem: "com.meshchat", category: "ActiveRoomRegistry"
     )
 
-    nonisolated init() {}
+    init() {}
 
     /// Покидает текущую комнату, если она есть.
     func leaveCurrent() async {

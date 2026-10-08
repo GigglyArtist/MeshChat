@@ -2,7 +2,6 @@
 // Copyright (C) 2026 MeshChat contributors
 
 import Foundation
-import UIKit
 import os
 
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.meshchat", category: "ui")
@@ -76,6 +75,8 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
     private(set) var canRejoin: Bool = false
     private(set) var isRejoining: Bool = false
     private(set) var rejoinedRoute: ChatRoute?
+    /// Установлен при уходе с экрана чата. Позволяет `rejoin()` покинуть осиротевшую комнату.
+    private(set) var exitedToHome: Bool = false
 
     // MARK: - Приватное состояние
 
@@ -96,7 +97,6 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
         self.rejoinInvite = rejoinInvite
         self.rooms = rooms
         peerNames[room.localPeerID] = localNickname
-        UIApplication.shared.isIdleTimerDisabled = true
     }
 
     // MARK: - Публичный API
@@ -128,11 +128,15 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
         await room.leave()
     }
 
+    /// Вызывается перед уходом с экрана чата; блокирует навигацию из `rejoin()`.
+    func exitToHome() {
+        exitedToHome = true
+    }
+
     /// Останавливает чтение событий. Вызывается из `.onDisappear` View.
     func stop() {
         eventTask?.cancel()
         eventTask = nil
-        UIApplication.shared.isIdleTimerDisabled = false
     }
 
     /// Вызывается, когда приложение возвращается на передний план (ADR-11).
@@ -147,12 +151,20 @@ private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.mesh
     // MARK: - Обработка событий
 
     /// Подключиться снова с тем же приглашением после обрыва (§12.1.1).
+    ///
+    /// Если пользователь ушёл с экрана до завершения подключения (`exitedToHome == true`),
+    /// покидает созданную комнату: у неё нет владельца (ADR-13).
     func rejoin() async {
         guard let invite = rejoinInvite, let rooms = rooms else { return }
         isRejoining = true
         sendError = nil
         do {
             let newRoom = try await rooms.joinRoom(invite: invite)
+            if exitedToHome {
+                await newRoom.leave()
+                return
+            }
+            isRejoining = false
             rejoinedRoute = ChatRoute(room: newRoom, rejoinInvite: invite)
         } catch {
             logger.error("rejoin failed: \(error, privacy: .public)")
