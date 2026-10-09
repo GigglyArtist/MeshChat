@@ -38,7 +38,7 @@ MeshChat — офлайн-мессенджер для iOS: SwiftUI + Core Data +
   - срезы `Data` сохраняют индексы исходника: индексируй от `startIndex`, наружу отдавай `Data(slice)`;
   - протоколы вне Presentation/App — `nonisolated` на **каждом** требовании; у актора синхронные свойства из протокола — `nonisolated let`;
   - акторы реентерабельны: после каждого `await` перепроверяй состояние (участник мог уйти, сессия — завершиться).
-  - синхронный `init` актора в режиме `MainActor` по умолчанию становится `@MainActor` → пиши `nonisolated init(...)`;
+  - синхронный `init` актора пиши **без** `nonisolated`: он и так не изолирован, а `nonisolated` на нём — ошибка Swift 6 (`'nonisolated' on an actor's synchronous initializer is invalid`);
   - события `AsyncStream` во ViewModel читаются в собственной задаче (`start()` идемпотентен), не в `.task` View;
   - чистые хелперы Presentation (форматирование, склонение) — `nonisolated static func`, чтобы их могли вызывать тесты вне главного актора.
   - замена элемента `NavigationStack` значением того же case (`path = [.chat(new)]`) может не пересоздать экран — `@State` с ViewModel останется старым → у View назначения `.id(<маршрут>)`;
